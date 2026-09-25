@@ -21,3 +21,9 @@ dist/
 *.sprx
 *.prx
 *.pkg
+
+# ProsperoRadio Vulkan integration outputs
+/.workspace/
+/out/
+*.ffpkg
+*.ffpfsc
