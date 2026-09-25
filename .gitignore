@@ -1,0 +1,15 @@
+# --- Build outputs (distributable via GitHub Releases instead) ---
+out/*
+!out/*.py
+!out/*.sh
+!out/test_pool.cpp
+!out/*.ps1
+
+# --- Local workspaces and recovery snapshots ---
+.workspace/
+recovery/
+
+# --- Console session transcript and caches ---
+Administrador PowerShell.txt
+__pycache__/
+*.pyc

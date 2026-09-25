@@ -1,0 +1,273 @@
+# ProsperoRadio — Contexto persistente del proyecto
+
+**Proyecto:** ProsperoRadio Modern / PS5 Homebrew
+**Estado de trabajo:** FIX5 / pre-compilación
+**Fecha de contexto:** 2026-09-25
+
+## 1. Objetivo
+
+El objetivo es reparar el código del ZIP modificado para llegar a una versión que pueda pasar a compilación real para PS5, preservando los cambios ya establecidos:
+
+- sustituir el camino de renderizado SDL por Vulkan;
+- mantener una interfaz moderna, de calidad homebrew y adaptada a PS5;
+- conservar la funcionalidad radio existente;
+- corregir integración, bootstrap, linker, rutas, stubs y dependencias;
+- evitar reescribir o degradar la UI ya implementada;
+- dejar un flujo de build reproducible.
+
+La prioridad actual NO es añadir nuevas funciones. Es conseguir un árbol consistente y compilable.
+
+## 2. Fuentes de referencia
+
+### Upstream
+Repositorio original:
+https://github.com/blackbearreloaded/ProsperoRadio
+
+Referencia de trabajo inspeccionada:
+`33898dd35375c1ae8370da137cfb6941d91c7684`
+
+### Vulkan
+Repositorio de referencia del backend Vulkan PS5:
+https://github.com/mihawk-99/PS5_Vulkan
+
+Estado consultado:
+commit `085aac6a9e42c0d6337660e7148eb8990604052a`
+
+Repositorio de integración de ejemplo:
+https://github.com/mihawk-99/PS5_vkQuake
+
+Se verificó que este proyecto integra el driver Vulkan mediante enlaces estáticos, no mediante carga dinámica del `.so` en tiempo de ejecución.
+
+## 3. Artefactos de trabajo
+
+ZIP original recibido del usuario:
+`/mnt/data/prospero_modern.zip`
+
+ZIP reparado generado:
+`/mnt/data/prospero_modern_FIXED5.zip`
+
+SHA-256 conocido del FIX5:
+`924430c9d2a32bda786e0c347b7960da3da76b091538451347e5ab40d3c38765`
+
+Documentación/registro incluido en el proyecto:
+- BUILD-FIX2.md
+- BUILD-FIX3.md
+- BUILD-FIX4.md
+- BUILD-FIX5.md
+- BUILD-FIXLOG.md
+- BUILD-STATUS.md
+- FIX4-REGRESSION.md
+- README.md
+- UPSTREAM-NOTICE.md
+
+## 4. Arquitectura actual observada
+
+El proyecto usa:
+
+- SDL como capa base/infraestructura existente;
+- RmlUi para la interfaz;
+- una UI RML moderna;
+- radio_service para catálogo/reproducción;
+- radio_input para DualSense;
+- radio_ime para entrada de texto;
+- fonts bitmap/RmlUi para la presentación;
+- toolchain Prospero/PS5;
+- runtime `libc.prx` generado por el propio bootstrap;
+- driver Vulkan PS5 integrado estáticamente.
+
+IMPORTANTE: SDL no debe continuar siendo el renderer gráfico final. Puede permanecer como dependencia/capa auxiliar únicamente cuando sea estrictamente necesaria para compatibilidad, pero el camino de presentación debe ser Vulkan.
+
+## 5. Hallazgos críticos ya identificados
+
+### 5.1 Build del proyecto modificado
+El árbol era un overlay/bootstrap que reconstruye el proyecto contra el commit upstream fijado. Por tanto, los parches deben existir en el overlay y no depender de modificaciones manuales fuera del mismo.
+
+### 5.2 Integración Vulkan
+El driver PS5_Vulkan se entrega como librerías estáticas. El ejemplo PS5_vkQuake confirma los artefactos esenciales:
+
+- `build/driver/ps5/libps5vk.ps5.a`
+- `.deps/native/vulkan-runtime/lib/libvk_runtime.ps5.a`
+- `build/driver/ps5/libpsbc_driver.ps5.a`
+- `.deps/native/psbc/lib/libpsbc_support.ps5.a`
+
+El título debe enlazarlos estáticamente.
+
+### 5.3 Objetos Mesa adicionales
+El driver deja fuera del archive estático tres fuentes que el ejecutable necesita cuando no existe el margen de símbolos indefinidos de un `.so`:
+
+- `src/util/u_thread.c`
+- `src/util/anon_file.c`
+- `src/util/os_file.c`
+
+PS5_vkQuake los compila mediante `tools/build-mesa-util.sh`. ProsperoRadio FIX5 adopta la misma estrategia conceptual.
+
+### 5.4 Problema de rutas
+El build original validaba rutas de archivos con patrones relativos al root. Pasar rutas absolutas desde variables como `APP_VULKAN_ARCHIVES` provocaba rechazo del propio validador.
+
+La integración corregida usa rutas relativas cuando corresponda.
+
+### 5.5 Runtime C++
+El driver Vulkan y partes de Mesa requieren:
+
+- `libc++.a`
+- `libc++abi.a`
+- `libunwind.a`
+- builtins de Clang cuando están disponibles
+
+El enlace debe mantener el grupo de dependencias.
+
+### 5.6 SDL renderer residual
+`src/main.cpp` upstream todavía contenía `SdlRenderInterface`, `SDL_CreateSoftwareRenderer`, `SDL_RenderGeometry`, `SDL_RenderCopy`, `SDL_UpdateWindowSurface`, etc.
+
+El objetivo FIX5 es eliminar el camino software SDL del bucle de render final y no dejar un segundo renderer activo de manera accidental.
+
+### 5.7 Vulkan WSI
+Cuando la aplicación crea superficie mediante funciones Vulkan debe habilitarse la extensión apropiada, incluyendo `VK_KHR_surface` y el backend de display utilizado.
+
+### 5.8 Shader compiler
+Las rutas del shader compiler deben resolverse desde la raíz real del proyecto/SDK y no desde un checkout sibling que pueda no existir.
+
+## 6. Cambios que NO deben revertirse
+
+Preservar:
+
+- interfaz moderna actual;
+- RmlUi;
+- tarjetas de emisoras;
+- vistas Popular / Trending / Voted / Favorites / Discover;
+- búsqueda y filtros;
+- overlays de búsqueda/créditos;
+- navegación DualSense;
+- radio service existente;
+- lógica de reproducción/parada;
+- soporte de fuentes bitmap/multilingüe;
+- assets y diseño visual actuales;
+- mejoras ya documentadas en BUILD-FIX*.md;
+- futuras correcciones de concurrencia/backups de la línea de trabajo anterior cuando formen parte del árbol real.
+
+## 7. Invariantes funcionales
+
+No cambiar sin motivo:
+
+- estados COPIAR / RESTORE / PAPELERA;
+- `backups-changed` cuando represente únicamente seguridad/motor;
+- `ps5-trash-changed` y `pc-trash-changed` como eventos independientes;
+- secuencia de operaciones destructivas;
+- cancelación antes de `Dispose` en tareas concurrentes;
+- deduplicación de descargas;
+- actualización de cada resultado inmediatamente cuando corresponda.
+
+## 8. Relación con la línea de trabajo anterior
+
+Existe una línea previa de correcciones centrada en versión `v6.8.7.26`, con especial atención a:
+
+- backups;
+- PC y papelera;
+- `WarmAsync` global;
+- tareas fire-and-forget;
+- backups secuenciales;
+- mostrar cada resultado inmediatamente;
+- deduplicación;
+- paralelismo controlado;
+- cancelación antes de Dispose;
+- consumidores unificados sin alterar estados COPIAR / RESTORE / PAPELERA.
+
+Estas reglas son contexto funcional y deben respetarse si esos módulos forman parte del ZIP final.
+
+## 9. Build esperado
+
+Entorno previsto:
+- Linux / WSL;
+- Bash;
+- Make;
+- Python 3;
+- Clang/LLD;
+- SDK PS5 descargado por el bootstrap;
+- dependencias Vulkan PS5 preparadas.
+
+Flujo general esperado:
+
+1. `make doctor`
+2. `make deps`
+3. preparar PS5_Vulkan sibling o indicar `PS5_VULKAN_DIR`
+4. construir dependencias Vulkan:
+   - `fetch-mesa.sh`
+   - `build-psbc-ps5.sh`
+   - `build-vulkan-runtime.sh`
+   - `build-driver.sh`
+5. ejecutar build del título
+6. verificar `dist/<TITLE_ID>/eboot.bin`
+7. inspeccionar/firmar/ensamblar
+8. opcionalmente empaquetar/deployar
+
+## 10. Estrategia de validación
+
+Antes de considerar el árbol final:
+
+### Estructura
+- el overlay reconstruye exactamente el commit esperado;
+- todos los archivos modificados están presentes;
+- no hay referencias a paths locales personales;
+- no hay archivos generados corruptos.
+
+### Código
+- `main.cpp` no deja un renderer SDL software activo;
+- includes Vulkan y headers del SDK son coherentes;
+- llamadas Vulkan usan extensiones declaradas;
+- símbolos del driver tienen proveedor válido;
+- no hay doble definición de runtime/stubs.
+
+### Build
+- `bash -n` sobre scripts;
+- parseo JSON;
+- lint del proyecto;
+- compilación host de herramientas;
+- build PS5 real en el entorno del usuario;
+- enlace sin unresolved symbols;
+- generación correcta de `eboot.bin`;
+- inspección de SELF.
+
+### Runtime
+Solo después de compilar:
+- arrancar homebrew;
+- comprobar splash/entrada;
+- comprobar render Vulkan;
+- comprobar navegación DualSense;
+- comprobar catálogo;
+- reproducir emisora;
+- comprobar overlays y búsqueda;
+- comprobar cierre limpio.
+
+## 11. Estado exacto al cerrar este bloque
+
+El proyecto FIX5 está preparado conceptualmente para pasar a la etapa de compilación real.
+
+No se debe afirmar que existe una compilación PS5 exitosa hasta que el usuario ejecute el toolchain real o se disponga de ese toolchain en el entorno.
+
+La tarea inmediata siguiente es:
+
+> ejecutar el build real del ZIP FIX5 en WSL/Linux y corregir iterativamente los errores de compilación/enlace que aparezcan, sin revertir la arquitectura Vulkan/UI.
+
+## 12. Regla de continuidad para futuras sesiones
+
+Cuando el usuario diga "continuar ProsperoRadio", cargar este documento como contexto base.
+
+Proceder en este orden:
+1. identificar el ZIP/árbol actual;
+2. comprobar la revisión base;
+3. leer `BUILD-STATUS.md`, `BUILD-FIXLOG.md`, `BUILD-FIX5.md`;
+4. verificar los cambios Vulkan/UI actuales;
+5. ejecutar o analizar el siguiente error de build;
+6. modificar solo lo necesario;
+7. registrar la corrección en un nuevo `BUILD-FIXN.md`;
+8. regenerar el ZIP de entrega;
+9. actualizar este contexto persistente.
+
+## 13. Decisiones de diseño ya tomadas
+
+- Vulkan es el renderer objetivo.
+- El driver se enlaza estáticamente; no depender de `dlopen` de un `.so` del repositorio.
+- La UI moderna existente se conserva.
+- El build debe ser reproducible y documentado.
+- Los fixes deben ser incrementales y trazables.
+- Nunca declarar "compila" sin una verificación real del toolchain.

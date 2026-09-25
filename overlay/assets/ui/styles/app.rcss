@@ -1,0 +1,745 @@
+* { box-sizing: border-box; }
+body, div, header, main, section, aside, footer, span, button, img { display: block; }
+
+body {
+    width: 1920px;
+    height: 1080px;
+    margin: 0;
+    overflow: hidden;
+    background-color: #071018;
+    color: #eef3f5;
+    font-family: "Montserrat";
+    font-size: 24px;
+    font-style: normal;
+    font-weight: 500;
+    line-height: 32px;
+}
+
+button {
+    margin: 0;
+    padding: 0;
+    border: 1px #253742;
+    border-radius: 0px;
+    background-color: #0d1820;
+    color: #eef3f5;
+    font-family: "Montserrat";
+    font-size: 20px;
+    font-style: normal;
+    font-weight: 500;
+    line-height: 30px;
+    text-align: left;
+    nav: auto;
+}
+
+#app-shell {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background-color: #071018;
+}
+
+#header {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 1920px;
+    height: 82px;
+    border-bottom: 1px #1c2b34;
+    background-color: #0a151c;
+}
+
+#brand-mark { position: absolute; left: 88px; top: 17px; width: 56px; height: 56px; }
+#brand-name { position: absolute; left: 154px; top: 13px; width: 280px; height: 36px; color: #eef3f5; font-size: 28px; line-height: 34px; }
+#brand-version { position: absolute; left: 156px; top: 47px; width: 130px; height: 24px; color: #69d4c0; font-size: 20px; line-height: 22px; }
+.browse-l1, .browse-r1 { position: absolute; top: 25px; height: 30px; color: #69d4c0; font-size: 20px; line-height: 28px; }
+.browse-l1 { left: 1608px; width: 58px; text-align: right; }
+.browse-label { position: absolute; left: 1672px; top: 25px; width: 82px; height: 30px; color: #8798a1; font-size: 20px; line-height: 28px; text-align: center; }
+.browse-r1 { left: 1760px; width: 62px; }
+
+#catalog-screen { position: absolute; left: 0px; top: 0px; width: 1920px; height: 994px; overflow: hidden; }
+#heading { position: absolute; left: 96px; top: 105px; width: 420px; height: 40px; color: #eef3f5; font-size: 32px; line-height: 38px; }
+#subtitle { position: absolute; left: 96px; top: 144px; width: 620px; height: 30px; color: #82929b; font-size: 20px; line-height: 28px; }
+
+.tab { position: absolute; top: 110px; height: 44px; border: 1px #182831; border-radius: 0px; background-color: #071018; color: #71818a; }
+.tab span { position: absolute; left: 0px; right: 0px; top: 7px; height: 28px; text-align: center; }
+.tab-0 { left: 730px; width: 108px; }
+.tab-1 { left: 844px; width: 118px; }
+.tab-2 { left: 968px; width: 120px; }
+.tab-3 { left: 1094px; width: 122px; }
+.tab-4 { left: 1222px; width: 118px; }
+.tab.active { border-bottom: 3px #69d4c0; color: #eef3f5; background-color: #0b1b22; }
+
+#status-pill { position: absolute; left: 1420px; top: 108px; width: 390px; height: 40px; border: 1px #1a2a33; background-color: #0b161d; }
+#status-pill-dot { position: absolute; left: 14px; top: 14px; width: 10px; height: 10px; }
+#status-pill-label { position: absolute; left: 34px; top: 5px; width: 340px; height: 28px; color: #7f929c; font-size: 20px; line-height: 26px; }
+
+.station-card { position: absolute; width: 408px; height: 120px; overflow: hidden; border: 1px #1d2e37; border-radius: 0px; background-color: #0b151c; color: #eef3f5; }
+.station-card.selected { background-color: #0f1d24; border-color: #26505b; }
+.station-card.focused { border: 2px #eef3f5; }
+.card-0 { left: 96px; top: 200px; }
+.card-1 { left: 520px; top: 200px; }
+.card-2 { left: 944px; top: 200px; }
+.card-3 { left: 96px; top: 332px; }
+.card-4 { left: 520px; top: 332px; }
+.card-5 { left: 944px; top: 332px; }
+
+.station-art { position: absolute; left: 14px; top: 14px; width: 92px; height: 92px; overflow: hidden; background-color: #285264; }
+.station-badge { position: absolute; left: 0px; top: 20px; width: 92px; height: 40px; color: #eef3f5; font-size: 28px; line-height: 38px; text-align: center; }
+.art-green { background-color: #20584e; }
+.art-blue { background-color: #285270; }
+.art-purple { background-color: #514265; }
+.art-olive { background-color: #48624c; }
+.art-cyan { background-color: #245f69; }
+.art-amber { background-color: #66572f; }
+.station-name { position: absolute; left: 124px; top: 19px; width: 252px; height: 34px; overflow: hidden; color: #eef3f5; font-size: 24px; line-height: 32px; text-overflow: ellipsis; white-space: nowrap; }
+.station-meta { position: absolute; left: 124px; top: 53px; width: 250px; height: 30px; overflow: hidden; color: #81939c; font-size: 20px; line-height: 28px; text-overflow: ellipsis; white-space: nowrap; }
+.station-rank { position: absolute; left: 330px; top: 18px; width: 52px; height: 28px; overflow: hidden; color: #60747e; font-size: 20px; line-height: 26px; text-align: right; white-space: nowrap; }
+.favorite-mark { position: absolute; left: 342px; top: 83px; width: 30px; height: 24px; color: #53656e; font-size: 20px; line-height: 22px; text-align: center; }
+.favorite-mark.saved { color: #69d4c0; }
+.live-mark { position: absolute; left: 124px; top: 87px; width: 56px; height: 24px; background-color: #143830; color: #69d4c0; font-size: 20px; line-height: 22px; text-align: center; }
+
+#pagination-rail { position: absolute; left: 96px; top: 470px; width: 1256px; height: 52px; overflow: hidden; border: 1px #1a2b34; background-color: #0a151c; }
+.page-action { position: absolute; top: 5px; height: 40px; border: 1px #0a151c; background-color: #0a151c; color: #7e9099; font-size: 20px; line-height: 26px; }
+.page-action span { position: absolute; left: 0px; right: 0px; top: 6px; height: 28px; text-align: center; }
+.page-action .page-arrow { position: absolute; top: 11px; width: 18px; height: 18px; display: none; }
+.page-action.available .page-arrow { display: block; }
+#page-prev { left: 14px; width: 180px; }
+#page-prev-icon { left: 0px; }
+#page-prev-label { left: 26px; }
+#page-next { left: 1058px; width: 184px; }
+#page-next-label { right: 26px; text-align: right; }
+#page-next-icon { left: 158px; }
+#page-label { position: absolute; left: 240px; top: 8px; width: 780px; height: 28px; color: #b5c2c8; font-size: 20px; line-height: 26px; text-align: center; }
+.page-track { position: absolute; left: 430px; top: 47px; width: 396px; height: 2px; background-color: #1a2b34; }
+#page-thumb { width: 48px; height: 2px; background-color: #69d4c0; }
+
+#discover-panel { position: absolute; left: 96px; top: 540px; width: 1256px; height: 84px; overflow: hidden; border: 1px #1a2b34; background-color: #0a151c; }
+.discover-heading { position: absolute; left: 18px; top: 26px; width: 92px; height: 28px; color: #69d4c0; font-size: 20px; line-height: 26px; }
+.discover-button { position: absolute; top: 10px; width: 350px; height: 62px; border: 1px #253742; background-color: #071018; }
+.discover-button span { position: absolute; left: 12px; top: 13px; width: 326px; height: 36px; overflow: hidden; color: #d3dde1; font-size: 20px; line-height: 30px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.discover-button-0 { left: 124px; }
+.discover-button-1 { left: 488px; }
+.discover-button-2 { left: 852px; }
+
+#detail-panel { position: absolute; left: 1382px; top: 200px; width: 436px; height: 424px; overflow: hidden; border: 1px #2c4a54; background-color: #0b171e; }
+.detail-kicker { position: absolute; left: 24px; top: 20px; width: 300px; height: 28px; color: #69d4c0; font-size: 20px; line-height: 26px; }
+.detail-art { position: absolute; left: 24px; top: 58px; width: 388px; height: 112px; overflow: hidden; background-color: #20584e; }
+#detail-badge { position: absolute; left: 0px; top: 24px; width: 388px; height: 58px; color: #eef3f5; font-size: 40px; line-height: 56px; text-align: center; }
+#detail-name { position: absolute; left: 24px; top: 184px; width: 388px; height: 34px; overflow: hidden; color: #eef3f5; font-size: 28px; line-height: 32px; text-overflow: ellipsis; white-space: nowrap; }
+#detail-meta, #detail-codec, #detail-metric { position: absolute; left: 24px; width: 388px; height: 28px; overflow: hidden; color: #83959e; font-size: 20px; line-height: 26px; text-overflow: ellipsis; white-space: nowrap; }
+#detail-meta { top: 220px; }
+#detail-codec { top: 248px; }
+#detail-metric { top: 276px; }
+#detail-divider { position: absolute; left: 24px; top: 314px; width: 388px; height: 1px; background-color: #1b2b34; }
+.status-dot { width: 10px; height: 10px; background-color: #69d4c0; }
+#detail-status-dot { position: absolute; left: 24px; top: 346px; }
+#detail-status { position: absolute; left: 44px; top: 334px; width: 340px; height: 30px; color: #69d4c0; font-size: 20px; line-height: 26px; }
+#play-button { position: absolute; left: 24px; top: 374px; width: 388px; height: 34px; border: 1px #69d4c0; background-color: #69d4c0; color: #071018; }
+#play-icon { position: absolute; left: 130px; top: 7px; width: 20px; height: 20px; }
+#play-icon img { position: absolute; left: 0px; top: 0px; width: 20px; height: 20px; }
+#play-icon .stop-glyph, #play-icon.stop .play-glyph { display: none; }
+#play-icon.stop .stop-glyph { display: block; }
+#play-label { position: absolute; left: 158px; top: 1px; width: 190px; height: 30px; color: #071018; font-size: 20px; line-height: 28px; }
+
+#now-panel { position: absolute; left: 96px; top: 648px; width: 1722px; height: 180px; overflow: hidden; border: 1px #1f313a; background-color: #0b171e; }
+.now-art { position: absolute; left: 22px; top: 22px; width: 136px; height: 136px; overflow: hidden; background-color: #102a32; }
+#now-badge { position: absolute; left: 0px; top: 26px; width: 136px; height: 40px; color: #eef3f5; font-size: 28px; line-height: 38px; text-align: center; }
+.eq-bar { position: absolute; top: 108px; width: 10px; height: 14px; background-color: #29454e; }
+.eq-0 { left: 20px; } .eq-1 { left: 42px; } .eq-2 { left: 64px; } .eq-3 { left: 86px; } .eq-4 { left: 108px; }
+.now-heading { position: absolute; left: 188px; top: 24px; width: 220px; height: 28px; color: #69d4c0; font-size: 20px; line-height: 26px; }
+#now-name { position: absolute; left: 188px; top: 56px; width: 820px; height: 38px; overflow: hidden; color: #eef3f5; font-size: 32px; line-height: 36px; text-overflow: ellipsis; white-space: nowrap; }
+#now-meta { position: absolute; left: 188px; top: 100px; width: 900px; height: 28px; overflow: hidden; color: #86979f; font-size: 20px; line-height: 26px; text-overflow: ellipsis; white-space: nowrap; }
+#now-state { position: absolute; left: 1220px; top: 64px; width: 450px; height: 34px; overflow: hidden; color: #86979f; font-size: 20px; line-height: 30px; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+
+#controller-footer { position: absolute; left: 0px; top: 994px; width: 1920px; height: 86px; overflow: hidden; border-top: 1px #1c2b34; background-color: #09131a; }
+.controller-hint { position: absolute; top: 25px; height: 32px; color: #80919a; }
+.controller-hint img { position: absolute; left: 0px; top: 0px; width: 32px; height: 32px; }
+.controller-hint span { position: absolute; left: 40px; top: 1px; height: 28px; overflow: visible; font-size: 20px; line-height: 26px; white-space: nowrap; }
+.hint-play { left: 96px; width: 110px; }
+.hint-back { left: 218px; width: 110px; }
+.hint-favorite { left: 340px; width: 144px; }
+.hint-search { left: 496px; width: 120px; }
+.hint-refresh { left: 628px; width: 120px; }
+#credit-button { position: absolute; left: 1190px; top: 22px; width: 350px; height: 38px; border: 1px #263842; background-color: #0b171e; color: #7f929b; }
+#credit-button span { position: absolute; left: 0px; right: 0px; top: 4px; height: 28px; text-align: center; font-size: 20px; line-height: 26px; }
+#connection-dot { position: absolute; left: 1566px; top: 38px; }
+#connection-label { position: absolute; left: 1590px; top: 28px; width: 240px; height: 28px; overflow: hidden; color: #69d4c0; font-size: 20px; line-height: 26px; text-overflow: ellipsis; white-space: nowrap; }
+
+.overlay { position: absolute; left: 0px; top: 0px; width: 1920px; height: 1080px; overflow: hidden; background-color: #071018; }
+.search-panel { position: absolute; left: 220px; top: 150px; width: 1480px; height: 720px; overflow: hidden; border: 1px #2c4a54; background-color: #0b171e; }
+.overlay-title { position: absolute; left: 40px; top: 32px; width: 600px; height: 40px; color: #eef3f5; font-size: 32px; line-height: 38px; }
+.overlay-subtitle { position: absolute; left: 40px; top: 72px; width: 920px; height: 30px; color: #84959e; font-size: 20px; line-height: 28px; }
+#search-query { position: absolute; left: 40px; top: 130px; width: 1400px; height: 56px; border: 1px #2a414b; background-color: #071018; color: #aebbc1; }
+#search-query span { position: absolute; left: 14px; top: 11px; width: 1370px; height: 32px; overflow: hidden; font-size: 24px; line-height: 30px; text-overflow: ellipsis; white-space: nowrap; }
+.filter-button { position: absolute; width: 670px; height: 116px; border: 1px #233741; background-color: #071018; color: #eef3f5; }
+.filter-button span { position: absolute; left: 14px; top: 20px; width: 642px; height: 76px; overflow: hidden; font-size: 24px; line-height: 36px; text-align: center; }
+.filter-button-0 { left: 40px; top: 216px; }
+.filter-button-1 { left: 770px; top: 216px; }
+.filter-button-2 { left: 40px; top: 346px; }
+.filter-button-3 { left: 770px; top: 346px; }
+.search-action { position: absolute; top: 508px; width: 320px; height: 60px; }
+.search-action span { position: absolute; left: 0px; right: 0px; top: 13px; height: 32px; text-align: center; font-size: 24px; line-height: 30px; }
+.search-reset { left: 400px; border: 1px #2a414b; background-color: #10212a; color: #d0dadd; }
+.search-apply { left: 760px; border: 1px #69d4c0; background-color: #69d4c0; color: #071018; }
+
+.credits-panel { position: absolute; left: 450px; top: 250px; width: 1020px; height: 500px; overflow: hidden; border: 1px #2c4a54; background-color: #0b171e; }
+.credits-kicker { position: absolute; left: 48px; top: 44px; width: 400px; height: 28px; color: #69d4c0; font-size: 20px; line-height: 26px; }
+.credits-title { position: absolute; left: 48px; top: 82px; width: 860px; height: 50px; color: #eef3f5; font-size: 40px; line-height: 48px; }
+.credits-copy { position: absolute; left: 48px; width: 900px; height: 90px; overflow: visible; font-size: 24px; line-height: 36px; color: #9aaab2; }
+.credits-copy-0 { top: 156px; }
+.credits-url { position: absolute; left: 48px; top: 270px; width: 500px; height: 32px; color: #69d4c0; font-size: 24px; line-height: 30px; }
+#credits-close { position: absolute; left: 48px; top: 360px; width: 900px; height: 56px; border: 1px #69d4c0; background-color: #69d4c0; color: #071018; }
+#credits-close span { position: absolute; left: 0px; right: 0px; top: 12px; height: 32px; text-align: center; font-size: 24px; line-height: 30px; }
+
+.focused, button:focus { border-color: #69d4c0; }
+#play-button.focused, #credit-button.focused, #credits-close.focused { border: 2px #eef3f5; }
+#credit-button.focused { background-color: #10232c; color: #eef3f5; }
+#search-query.focused, #filter-0.focused, #filter-1.focused, #filter-2.focused, #filter-3.focused, #search-reset.focused { border: 2px #69d4c0; background-color: #10232c; }
+#search-apply.focused { border: 2px #eef3f5; background-color: #69d4c0; }
+.warning { color: #d8b35a; }
+.error { color: #e16f76; }
+.playing { color: #69d4c0; }
+#connection-dot.warning, #detail-status-dot.warning { background-color: #d8b35a; }
+#connection-dot.error, #detail-status-dot.error { background-color: #e16f76; }
+.station-card.playing { border-color: #69d4c0; }
+.station-card.playing .live-mark { display: block; }
+#now-panel.playing .eq-bar, #now-art.playing .eq-bar, .eq-bar.playing { background-color: #69d4c0; }
+#play-button.playing { border-color: #69d4c0; background-color: #69d4c0; }
+.hidden { display: none; }
+
+/* ========================================================================
+   ProsperoRadio physical-radio skin v2
+   1280x720 runtime backplate derived from 4K source art + minimal RmlUi overlay.
+   The logical RmlUi surface remains 1920x1080.
+   ======================================================================== */
+
+body {
+    background-color: #000000;
+}
+
+#app-shell {
+    position: relative;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    background-color: #000000;
+}
+
+/* Full-resolution KTX2 backplate with Vulkan mip levels. The 4K source stays
+   intact and GPU sampling selects lower mip levels for smaller output modes. */
+#radio-backdrop {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 1920px;
+    height: 1080px;
+    z-index: 0;
+}
+
+/* Remove the old dashboard chrome completely. */
+#header,
+#heading,
+#subtitle,
+#status-pill,
+#pagination-rail,
+#controller-footer {
+    display: none;
+}
+
+#catalog-screen {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 1920px;
+    height: 1080px;
+    overflow: hidden;
+    z-index: 2;
+    background-color: transparent;
+}
+
+/* Station cards remain real DOM/focus nodes for RadioApp. They must have no
+   visible geometry, because RefreshCard() and UpdateFocus() still update them. */
+.station-card {
+    position: absolute;
+    left: -5000px;
+    top: -5000px;
+    width: 1px;
+    height: 1px;
+    min-width: 1px;
+    min-height: 1px;
+    overflow: hidden;
+    border: 0px;
+    background-color: transparent;
+    color: transparent;
+}
+.station-card.selected,
+.station-card.focused,
+.station-card.playing {
+    border: 0px;
+    background-color: transparent;
+    color: transparent;
+}
+.station-card .station-art,
+.station-card .station-name,
+.station-card .station-meta,
+.station-card .station-rank,
+.station-card .favorite-mark,
+.station-card .live-mark {
+    display: none;
+}
+
+/* Preserve SetVisible(..., false) semantics even with the physical skin. */
+.station-card.hidden,
+#discover-panel.hidden,
+#now-panel.hidden,
+#search-overlay.hidden,
+#settings-overlay.hidden,
+#credits-overlay.hidden {
+    display: none;
+}
+
+/* ------------------------------------------------------------------------
+   CENTRAL DISPLAY
+   ------------------------------------------------------------------------
+   On the 1920x1080 presentation the glass area in the supplied artwork is
+   approximately x=445..1465, y=294..580. Only text/status is painted here.
+   ------------------------------------------------------------------------ */
+#detail-panel {
+    position: absolute;
+    left: 462px;
+    top: 316px;
+    width: 990px;
+    height: 250px;
+    overflow: hidden;
+    z-index: 5;
+    border: 0px;
+    background-color: transparent;
+    color: #f1f3f4;
+}
+
+.detail-kicker {
+    display: none;
+}
+
+/* radio_app.cpp calls SetProperty(background-color) on this node. Make the
+   visual carrier effectively 1x1 so that property cannot create a coloured
+   station card. Its child badge is allowed to overflow visually. */
+.detail-art {
+    position: absolute;
+    left: 22px;
+    top: 48px;
+    width: 1px;
+    height: 1px;
+    overflow: visible;
+    border: 0px;
+    background-color: transparent;
+}
+
+#detail-badge {
+    position: absolute;
+    left: -1px;
+    top: 10px;
+    width: 118px;
+    height: 42px;
+    color: #d9a94d;
+    font-size: 28px;
+    line-height: 38px;
+    text-align: center;
+}
+
+#detail-name {
+    position: absolute;
+    left: 164px;
+    top: 24px;
+    width: 610px;
+    height: 46px;
+    overflow: hidden;
+    color: #f2f3f3;
+    font-size: 40px;
+    line-height: 42px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#detail-meta {
+    position: absolute;
+    left: 164px;
+    top: 78px;
+    width: 610px;
+    height: 32px;
+    overflow: hidden;
+    color: #c5cbcc;
+    font-size: 24px;
+    line-height: 28px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#detail-codec {
+    position: absolute;
+    left: 164px;
+    top: 116px;
+    width: 610px;
+    height: 28px;
+    overflow: hidden;
+    color: #8e9798;
+    font-size: 20px;
+    line-height: 26px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#detail-metric {
+    position: absolute;
+    left: 164px;
+    top: 150px;
+    width: 610px;
+    height: 28px;
+    overflow: hidden;
+    color: #667173;
+    font-size: 20px;
+    line-height: 26px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#detail-divider {
+    position: absolute;
+    left: 164px;
+    top: 184px;
+    width: 610px;
+    height: 1px;
+    background-color: #303536;
+}
+
+#detail-status-dot {
+    position: absolute;
+    left: 810px;
+    top: 42px;
+    width: 10px;
+    height: 10px;
+    background-color: #d9a94d;
+}
+
+#detail-status {
+    position: absolute;
+    left: 832px;
+    top: 32px;
+    width: 142px;
+    height: 46px;
+    overflow: hidden;
+    color: #d9a94d;
+    font-size: 20px;
+    line-height: 24px;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+#detail-status.warning,
+#detail-status.error {
+    color: #d9a94d;
+}
+
+/* Transparent playback hit target over the physical PLAY/PAUSE key printed
+   in the artwork. No CSS button is visible. */
+#play-button {
+    position: absolute;
+    left: 650px;
+    top: 201px;
+    width: 320px;
+    height: 54px;
+    border: 0px;
+    background-color: transparent;
+    color: transparent;
+    z-index: 7;
+}
+#play-button.focused,
+#play-button.playing,
+#play-button:focus {
+    border: 0px;
+    background-color: transparent;
+    color: transparent;
+}
+#play-icon,
+#play-label {
+    display: none;
+}
+
+/* ------------------------------------------------------------------------
+   LOWER PHYSICAL KEYS
+   ------------------------------------------------------------------------ */
+.tab {
+    position: absolute;
+    top: 600px;
+    height: 62px;
+    z-index: 8;
+    border: 0px;
+    background-color: transparent;
+    color: transparent;
+}
+.tab span,
+.tab.active span {
+    color: transparent;
+}
+.tab.focused,
+.tab.active,
+.tab:focus {
+    border: 0px;
+    background-color: transparent;
+    color: transparent;
+}
+.tab-0 { left: 450px; width: 76px; }
+.tab-1 { left: 526px; width: 130px; }
+.tab-2 { left: 656px; width: 130px; }
+.tab-3 { left: 786px; width: 128px; }
+.tab-4 { left: 914px; width: 122px; }
+
+/* Keep the existing now-playing DOM alive for RadioApp, but do not render a
+   second panel. RefreshPlayback continues to update its IDs. */
+#now-panel {
+    display: none;
+}
+
+/* Discover can appear inside the glass as a lightweight text mode. */
+#discover-panel {
+    position: absolute;
+    left: 485px;
+    top: 470px;
+    width: 920px;
+    height: 125px;
+    overflow: hidden;
+    z-index: 10;
+    border: 0px;
+    background-color: transparent;
+}
+.discover-heading {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 120px;
+    height: 28px;
+    color: #d9a94d;
+    font-size: 20px;
+    line-height: 26px;
+}
+.discover-button {
+    position: absolute;
+    top: 36px;
+    width: 280px;
+    height: 62px;
+    border: 1px #5b5550;
+    background-color: transparent;
+    color: #e7e8e8;
+}
+.discover-button span {
+    position: absolute;
+    left: 8px;
+    top: 7px;
+    width: 262px;
+    height: 48px;
+    overflow: hidden;
+    color: #d6d9d9;
+    font-size: 20px;
+    line-height: 24px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.discover-button-0 { left: 120px; }
+.discover-button-1 { left: 420px; }
+.discover-button-2 { left: 720px; }
+
+/* Search/credits retain the proven modal UI from the original 209-line CSS. */
+.overlay {
+    z-index: 30;
+}
+
+/* Settings stays inside the radio's glass display so the physical backplate remains visible. */
+#settings-overlay {
+    background-color: transparent;
+    z-index: 40;
+}
+.settings-panel {
+    position: absolute;
+    left: 462px;
+    top: 300px;
+    width: 990px;
+    height: 272px;
+    overflow: hidden;
+    border: 2px #8a6a3c;
+    background-color: #080f14;
+}
+.settings-kicker {
+    position: absolute;
+    left: 26px;
+    top: 16px;
+    width: 480px;
+    height: 24px;
+    color: #d9a94d;
+    font-size: 20px;
+    line-height: 23px;
+}
+.settings-title {
+    position: absolute;
+    left: 26px;
+    top: 42px;
+    width: 460px;
+    height: 34px;
+    color: #eef3f5;
+    font-size: 28px;
+    line-height: 32px;
+}
+.settings-current-list {
+    position: absolute;
+    right: 28px;
+    top: 22px;
+    width: 400px;
+    height: 30px;
+    overflow: hidden;
+    color: #d9a94d;
+    font-size: 20px;
+    line-height: 26px;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.settings-station-count {
+    position: absolute;
+    right: 28px;
+    top: 50px;
+    width: 400px;
+    height: 24px;
+    color: #84959e;
+    font-size: 20px;
+    line-height: 23px;
+    text-align: right;
+}
+.settings-volume-row {
+    position: absolute;
+    left: 26px;
+    top: 82px;
+    width: 938px;
+    height: 50px;
+    border: 1px #263943;
+    background-color: #0b171e;
+}
+.settings-volume-label {
+    position: absolute;
+    left: 14px;
+    top: 12px;
+    width: 190px;
+    height: 26px;
+    color: #d6dfe3;
+    font-size: 20px;
+    line-height: 24px;
+}
+.settings-volume-value {
+    position: absolute;
+    left: 210px;
+    top: 12px;
+    width: 76px;
+    height: 26px;
+    color: #eef3f5;
+    font-size: 20px;
+    line-height: 24px;
+    text-align: right;
+}
+.settings-volume-meter {
+    position: absolute;
+    left: 302px;
+    top: 18px;
+    width: 390px;
+    height: 12px;
+    border: 1px #42515a;
+    background-color: #050a0e;
+}
+#settings-volume-fill {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 390px;
+    height: 10px;
+    background-color: #d9a94d;
+}
+.settings-volume-help {
+    position: absolute;
+    right: 12px;
+    top: 12px;
+    width: 220px;
+    height: 26px;
+    color: #84959e;
+    font-size: 20px;
+    line-height: 24px;
+    text-align: right;
+}
+.settings-action {
+    position: absolute;
+    top: 148px;
+    width: 450px;
+    height: 52px;
+    border: 1px #263943;
+    background-color: #0b171e;
+    color: #eef3f5;
+}
+.settings-favorites { left: 26px; }
+.settings-refresh { left: 512px; }
+.settings-action-title {
+    position: absolute;
+    left: 12px;
+    top: 5px;
+    width: 260px;
+    height: 24px;
+    color: #eef3f5;
+    font-size: 20px;
+    line-height: 23px;
+}
+.settings-action-detail {
+    position: absolute;
+    right: 12px;
+    top: 5px;
+    width: 160px;
+    height: 24px;
+    overflow: hidden;
+    color: #84959e;
+    font-size: 20px;
+    line-height: 23px;
+    text-align: right;
+    text-overflow: ellipsis;
+}
+.settings-action.focused {
+    border: 2px #d9a94d;
+    background-color: #13242c;
+}
+.settings-controls {
+    position: absolute;
+    left: 26px;
+    top: 216px;
+    width: 938px;
+    height: 28px;
+    overflow: hidden;
+    color: #84959e;
+    font-size: 20px;
+    line-height: 24px;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#volume-level {
+    position: absolute;
+    left: 1290px;
+    top: 292px;
+    width: 150px;
+    height: 26px;
+    z-index: 12;
+    color: #d9a94d;
+    font-size: 20px;
+    line-height: 24px;
+    text-align: right;
+}
+
+/* The base stylesheet defines these state colours. Keep the physical skin's
+   warm amber accent for the central playback state without adding effects. */
+#detail-status-dot.warning { background-color: #d9a94d; }
+#detail-status-dot.error { background-color: #d56b65; }
