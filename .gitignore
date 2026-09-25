@@ -1,15 +1,25 @@
 # --- Build outputs (distributable via GitHub Releases instead) ---
 out/*
-!out/*.py
-!out/*.sh
+!out/decompress_ps5_dump.py
+!out/disasm_ps5_core.py
 !out/test_pool.cpp
-!out/*.ps1
+!out/monitor_ps5_klog.ps1
+!out/watch_ps5_coredumps.ps1
 
 # --- Local workspaces and recovery snapshots ---
 .workspace/
 recovery/
 
-# --- Console session transcript and caches ---
+# --- Detailed machine history: summarized in MEMORIA.md, local-only ---
+BUILD-FIX*.md
+BUILD-FAILURE-FIX*.md
+BUILD-FIXLOG.md
+BUILD-STATUS.md
+FIX4-REGRESSION.md
+PROSPERORADIO_PROJECT_CONTEXT*.md
+CRASH-DIAGNOSIS-2026-09-25.md
+
+# --- Session transcript and caches ---
 Administrador PowerShell.txt
 __pycache__/
 *.pyc

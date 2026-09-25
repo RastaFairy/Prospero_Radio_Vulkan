@@ -4,11 +4,10 @@
 >
 > *2.2.1* es la versión del paquete de interfaz original; *01.000.017* es la
 > `contentVersion` que ve la consola. Historial legible por humanos, cambios y
-> pendientes: **[CHANGELOG.md](CHANGELOG.md)** · Diagnóstico del crash histórico:
-> [CRASH-DIAGNOSIS-2026-09-25.md](CRASH-DIAGNOSIS-2026-09-25.md).
+> pendientes: **[CHANGELOG.md](CHANGELOG.md)** · Memoria del proyecto (etapas,
+> decisiones y lecciones): **[MEMORIA.md](MEMORIA.md)**.
 > La versión la fija `overlay/apply-vulkan.py` (`VERSION`) y acaba en
-> `sce_sys/param.json` al compilar; los SHA-256 de cada build van anotados en el
-> `BUILD-FIX` correspondiente.
+> `sce_sys/param.json` al compilar.
 
 Paquete de build reproducible para `blackbearreloaded/ProsperoRadio` con la remodelación de interfaz física de radio y un renderer Vulkan para PS5 basado en `mihawk-99/PS5_Vulkan`.
 

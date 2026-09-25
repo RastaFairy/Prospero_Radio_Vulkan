@@ -27,8 +27,8 @@ existe por tres motivos:
    runtime en `/download0/prospero-radio.log`, rastro de las últimas 32 asignaciones,
    backtraces simbolizados y el tooling en `out/` para analizar coredumps.
 
-El detalle técnico por build está en `BUILD-FIX1..28.md`; este fichero es el resumen
-para humanos.
+El detalle técnico de cada build está en la **[MEMORIA.md](MEMORIA.md)**; este fichero
+es el resumen para humanos.
 
 ---
 
@@ -56,7 +56,7 @@ para humanos.
   asignaciones y `abort()` con el tamaño pedido en el log.
 - **La prueba en consola dio el culpable**: `calloc(1, 1,22 MB)` del mapa de glifos de
   la fuente multilingüe devolvía NULL a los ~0,6 s. Demostró que el heap de libc no
-  crece (ver `BUILD-FIX28.md`).
+  crece (ver `MEMORIA.md`).
 
 ## 01.000.015 — 2026-09-25 · ⚠️ no ejecutable
 
@@ -90,13 +90,12 @@ para humanos.
 | Ruta | Contenido |
 | --- | --- |
 | `overlay/` | Todo lo que este fork añade: renderer Vulkan, runtime de memoria, UI, scripts de parcheo |
-| `BUILD-FIX1..28.md` | Historial técnico de cada corrección de build/crash |
-| `CRASH-DIAGNOSIS-2026-09-25.md` | Forense completo de los 35+ crashes y cómo se simbolizaron |
-| `out/` | Tooling de análisis (simbolizado de coredumps, test del pool, watchers de klog/FTP) |
+| `MEMORIA.md` | Etapas del proyecto, decisiones, lecciones técnicas y pendientes |
+| `out/` | Tooling conservado (simbolizado de coredumps, test del pool, watchers de klog/FTP) |
 | `src/`, `tooling/`, `vendor/`, `docs/` | El árbol base de upstream, conservado del fork original |
 
 ## Distribución
 
 Los paquetes (`PPSA99001.ffpkg` / `PPSA99001.ffpfsc`) y sus SHA-256 se documentan en
-`BUILD-FIX28.md`; no se versionan en git por tamaño — adjúntalos a un *Release* de
+`MEMORIA.md` (§ 4); no se versionan en git por tamaño — adjúntalos a un *Release* de
 GitHub con la etiqueta de la versión.
