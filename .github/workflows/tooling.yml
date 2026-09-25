@@ -1,0 +1,169 @@
+# ProsperoRadio - Lint, test, build, and release validation.
+# Copyright (C) 2026 BlackBearReloaded
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "[0-9][0-9].[0-9][0-9][0-9].[0-9][0-9][0-9]"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Lint, test, and build release artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+
+      - name: Install native toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes clang-18 clang-format-18 clang-tidy-18 lld-18 libsqlite3-dev make pkg-config tar unzip wget zip
+
+      - name: Read app identity and version
+        shell: bash
+        run: |
+          metadata=$(python3 -c 'import json; p=json.load(open("sce_sys/param.json")); print(p["titleId"], p["contentVersion"])')
+          read -r title_id content_version <<< "$metadata"
+          [[ $title_id =~ ^PPSA[0-9]{5}$ ]] || exit 2
+          [[ $content_version =~ ^[0-9]{2}\.[0-9]{3}\.[0-9]{3}$ ]] || exit 2
+          if [[ $GITHUB_REF_TYPE == tag && $GITHUB_REF_NAME != "$content_version" ]]; then
+            echo "Release tag must exactly match param.json contentVersion: $content_version" >&2
+            exit 2
+          fi
+          echo "TITLE_ID=$title_id" >> "$GITHUB_ENV"
+          echo "CONTENT_VERSION=$content_version" >> "$GITHUB_ENV"
+
+      - name: Lint source and metadata
+        run: make lint
+
+      - name: Run host GoogleTest suite
+        run: make test-unit
+
+      - name: Run host integration tests
+        run: make test-integration
+
+      - name: Reproduce clean-room runtime shim
+        run: make libc
+
+      - name: Verify generated runtime is unchanged
+        run: cd runtime && sha256sum -c libc.prx.sha256
+
+      - name: Build compressed release image
+        run: make ffpfsc
+
+      - name: Archive app folder
+        run: cd dist && zip -qr "$TITLE_ID.zip" "$TITLE_ID"
+
+      - name: Verify app-folder archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          unzip -t "$TITLE_ID.zip"
+          unzip -Z1 "$TITLE_ID.zip" | grep -Fx "$TITLE_ID/eboot.bin"
+          unzip -Z1 "$TITLE_ID.zip" | grep -Fx "$TITLE_ID/sce_sys/param.json"
+
+      - name: Write release checksums
+        run: cd dist && sha256sum "$TITLE_ID.ffpfsc" "$TITLE_ID.zip" > SHA256SUMS
+
+      - name: Upload build
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: prospero-radio-${{ github.sha }}-release
+          path: |
+            dist/${{ env.TITLE_ID }}.ffpfsc
+            dist/${{ env.TITLE_ID }}.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: GitHub release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+
+    steps:
+      - name: Download verified build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh run download "$GITHUB_RUN_ID"
+          --repo "$GITHUB_REPOSITORY"
+          --name "prospero-radio-$GITHUB_SHA-release"
+          --dir release
+
+      - name: Prepare release assets
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release
+          mapfile -d '' files < <(find . -type f -print0)
+          shopt -s nullglob
+          images=(PPSA*.ffpfsc)
+          archives=(PPSA*.zip)
+          if (( ${#files[@]} != 3 || ${#images[@]} != 1 || ${#archives[@]} != 1 )) || [[ ! -f SHA256SUMS ]]; then
+            echo "Expected one FFPFSC image, one app-folder ZIP, and SHA256SUMS at the artifact root." >&2
+            exit 1
+          fi
+          title_id=${images[0]%.ffpfsc}
+          [[ ${archives[0]} == "$title_id.zip" ]]
+          sha256sum -c SHA256SUMS
+          unzip -t "${archives[0]}"
+          echo "image=${images[0]}" >> "$GITHUB_OUTPUT"
+          echo "archive=${archives[0]}" >> "$GITHUB_OUTPUT"
+          echo "checksum=SHA256SUMS" >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.package.outputs.image }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+          CHECKSUM: ${{ steps.package.outputs.checksum }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          assets=("release/$IMAGE" "release/$ARCHIVE" "release/$CHECKSUM")
+          image_name="${IMAGE##*/}"
+          archive_name="${ARCHIVE##*/}"
+          checksum_name="${CHECKSUM##*/}"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            while IFS= read -r old_asset; do
+              if [[ $old_asset != "$image_name" && $old_asset != "$archive_name" && $old_asset != "$checksum_name" ]]; then
+                gh release delete-asset "$GITHUB_REF_NAME" "$old_asset" --yes --repo "$GITHUB_REPOSITORY"
+              fi
+            done < <(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "ProsperoRadio $GITHUB_REF_NAME"
+          fi
