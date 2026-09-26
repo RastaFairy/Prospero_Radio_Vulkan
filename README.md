@@ -62,6 +62,12 @@ lógica (emisoras, catálogo, favoritos, streaming) y le cambia dos cosas de fon
 | ✕ | Reproducir / confirmar |
 | △ | Ajustes (favoritos, actualización de catálogo) |
 
+Los recursos modulares para foco/pulsación, los 21 overlays de volumen en pasos
+de cinco y el tuner digital están descritos en la [guía del atlas](docs/RADIO-CONTROLS-ATLAS.md).
+La propuesta híbrida actual y los pasos para integrar sus texturas en Vulkan/RmlUi
+están en la [guía de GLM](docs/GLM-TEXTURAS-VULKAN.md); la [vista de la propuesta](docs/RADIO-FRONTAL-HIBRIDO.md)
+incluye sus previsualizaciones.
+
 ## 🪵 Temas
 
 <div align="center">

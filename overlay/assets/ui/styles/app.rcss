@@ -302,15 +302,15 @@ body {
 /* ------------------------------------------------------------------------
    CENTRAL DISPLAY
    ------------------------------------------------------------------------
-   On the 1920x1080 presentation the glass area in the supplied artwork is
-   approximately x=445..1465, y=294..580. Only text/status is painted here.
+   The front artwork defines one centered, uniform glass area. Runtime text
+   and optional artwork stay inside x=540..1380, y=392..608.
    ------------------------------------------------------------------------ */
 #detail-panel {
     position: absolute;
-    left: 462px;
-    top: 316px;
-    width: 990px;
-    height: 250px;
+    left: 540px;
+    top: 392px;
+    width: 840px;
+    height: 216px;
     overflow: hidden;
     z-index: 5;
     border: 0px;
@@ -327,8 +327,8 @@ body {
    station card. Its child badge is allowed to overflow visually. */
 .detail-art {
     position: absolute;
-    left: 22px;
-    top: 48px;
+    left: 8px;
+    top: 76px;
     width: 1px;
     height: 1px;
     overflow: visible;
@@ -338,11 +338,11 @@ body {
 
 #detail-badge {
     position: absolute;
-    left: -1px;
-    top: 10px;
+    left: 0px;
+    top: 0px;
     width: 118px;
     height: 42px;
-    color: #d9a94d;
+    color: #e2a658;
     font-size: 28px;
     line-height: 38px;
     text-align: center;
@@ -350,40 +350,40 @@ body {
 
 #detail-name {
     position: absolute;
-    left: 164px;
-    top: 24px;
-    width: 610px;
-    height: 46px;
+    left: 148px;
+    top: 14px;
+    width: 550px;
+    height: 40px;
     overflow: hidden;
-    color: #f2f3f3;
-    font-size: 40px;
-    line-height: 42px;
+    color: #f4be76;
+    font-size: 34px;
+    line-height: 38px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 #detail-meta {
     position: absolute;
-    left: 164px;
-    top: 78px;
-    width: 610px;
-    height: 32px;
+    left: 148px;
+    top: 58px;
+    width: 680px;
+    height: 28px;
     overflow: hidden;
-    color: #c5cbcc;
-    font-size: 24px;
-    line-height: 28px;
+    color: #e2a658;
+    font-size: 22px;
+    line-height: 26px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 #detail-codec {
     position: absolute;
-    left: 164px;
-    top: 116px;
-    width: 610px;
-    height: 28px;
+    left: 148px;
+    top: 90px;
+    width: 680px;
+    height: 25px;
     overflow: hidden;
-    color: #8e9798;
+    color: #bc7e39;
     font-size: 20px;
     line-height: 26px;
     text-overflow: ellipsis;
@@ -392,44 +392,44 @@ body {
 
 #detail-metric {
     position: absolute;
-    left: 164px;
-    top: 150px;
-    width: 610px;
-    height: 28px;
+    left: 148px;
+    top: 120px;
+    width: 680px;
+    height: 24px;
     overflow: hidden;
-    color: #667173;
-    font-size: 20px;
-    line-height: 26px;
+    color: #bc7e39;
+    font-size: 18px;
+    line-height: 22px;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 
 #detail-divider {
     position: absolute;
-    left: 164px;
-    top: 184px;
-    width: 610px;
+    left: 148px;
+    top: 151px;
+    width: 680px;
     height: 1px;
-    background-color: #303536;
+    background-color: #68492d;
 }
 
 #detail-status-dot {
     position: absolute;
-    left: 810px;
-    top: 42px;
+    left: 696px;
+    top: 17px;
     width: 10px;
     height: 10px;
-    background-color: #d9a94d;
+    background-color: #e2a658;
 }
 
 #detail-status {
     position: absolute;
-    left: 832px;
-    top: 32px;
-    width: 142px;
-    height: 46px;
+    left: 716px;
+    top: 8px;
+    width: 110px;
+    height: 32px;
     overflow: hidden;
-    color: #d9a94d;
+    color: #e2a658;
     font-size: 20px;
     line-height: 24px;
     text-align: right;
@@ -439,17 +439,17 @@ body {
 
 #detail-status.warning,
 #detail-status.error {
-    color: #d9a94d;
+    color: #e2a658;
 }
 
 /* Transparent playback hit target over the physical PLAY/PAUSE key printed
    in the artwork. No CSS button is visible. */
 #play-button {
     position: absolute;
-    left: 650px;
-    top: 201px;
-    width: 320px;
-    height: 54px;
+    left: 1340px;
+    top: 700px;
+    width: 146px;
+    height: 58px;
     border: 0px;
     background-color: transparent;
     color: transparent;
@@ -468,12 +468,15 @@ body {
 }
 
 /* ------------------------------------------------------------------------
-   LOWER PHYSICAL KEYS
+   LOGICAL CATALOG SELECTORS
    ------------------------------------------------------------------------ */
 .tab {
     position: absolute;
-    top: 600px;
-    height: 62px;
+    left: -5000px;
+    top: -5000px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
     z-index: 8;
     border: 0px;
     background-color: transparent;
@@ -490,25 +493,73 @@ body {
     background-color: transparent;
     color: transparent;
 }
-.tab-0 { left: 450px; width: 76px; }
-.tab-1 { left: 526px; width: 130px; }
-.tab-2 { left: 656px; width: 130px; }
-.tab-3 { left: 786px; width: 128px; }
-.tab-4 { left: 914px; width: 122px; }
+.tab-0,
+.tab-1,
+.tab-2,
+.tab-3,
+.tab-4 { width: 1px; height: 1px; }
 
-/* Keep the existing now-playing DOM alive for RadioApp, but do not render a
-   second panel. RefreshPlayback continues to update its IDs. */
+/* Stream metadata shares the display. Keep the panel hidden until real
+   playback data exists; GLM should set .playing when it has valid data. */
 #now-panel {
+    position: absolute;
     display: none;
+    left: 540px;
+    top: 551px;
+    width: 840px;
+    height: 57px;
+    overflow: hidden;
+    z-index: 6;
+    border: 0px;
+    background-color: transparent;
 }
+#now-panel.playing { display: block; }
+.now-art { display: none; }
+.now-heading {
+    position: absolute;
+    left: 0px;
+    top: 1px;
+    width: 124px;
+    height: 24px;
+    color: #e2a658;
+    font-size: 16px;
+    line-height: 21px;
+}
+#now-name {
+    position: absolute;
+    left: 132px;
+    top: 0px;
+    width: 704px;
+    height: 27px;
+    overflow: hidden;
+    color: #f4be76;
+    font-size: 23px;
+    line-height: 26px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#now-meta {
+    position: absolute;
+    left: 0px;
+    top: 30px;
+    width: 836px;
+    height: 22px;
+    overflow: hidden;
+    color: #bc7e39;
+    font-size: 17px;
+    line-height: 21px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+#now-state { display: none; }
 
 /* Discover can appear inside the glass as a lightweight text mode. */
 #discover-panel {
     position: absolute;
-    left: 485px;
-    top: 470px;
-    width: 920px;
-    height: 125px;
+    left: 540px;
+    top: 450px;
+    width: 840px;
+    height: 154px;
     overflow: hidden;
     z-index: 10;
     border: 0px;
@@ -520,14 +571,14 @@ body {
     top: 0px;
     width: 120px;
     height: 28px;
-    color: #d9a94d;
+    color: #e2a658;
     font-size: 20px;
     line-height: 26px;
 }
 .discover-button {
     position: absolute;
     top: 36px;
-    width: 280px;
+    width: 230px;
     height: 62px;
     border: 1px #5b5550;
     background-color: transparent;
@@ -537,7 +588,7 @@ body {
     position: absolute;
     left: 8px;
     top: 7px;
-    width: 262px;
+    width: 212px;
     height: 48px;
     overflow: hidden;
     color: #d6d9d9;
@@ -547,13 +598,159 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.discover-button-0 { left: 120px; }
-.discover-button-1 { left: 420px; }
-.discover-button-2 { left: 720px; }
+.discover-button-0 { left: 100px; }
+.discover-button-1 { left: 355px; }
+.discover-button-2 { left: 610px; }
 
-/* Search/credits retain the proven modal UI from the original 209-line CSS. */
+/* Search, settings and credits sit inside the radio's glass display. */
 .overlay {
     z-index: 30;
+    background-color: transparent;
+}
+#search-overlay,
+#credits-overlay {
+    background-color: transparent;
+}
+.search-panel {
+    left: 535px;
+    top: 378px;
+    width: 850px;
+    height: 242px;
+    border: 2px #8a6a3c;
+    background-color: #2b1d13;
+}
+.overlay-title {
+    left: 20px;
+    top: 11px;
+    width: 500px;
+    height: 26px;
+    color: #f4be76;
+    font-size: 22px;
+    line-height: 25px;
+}
+.overlay-subtitle {
+    left: 20px;
+    top: 39px;
+    width: 810px;
+    height: 22px;
+    color: #bc7e39;
+    font-size: 15px;
+    line-height: 20px;
+}
+#search-query {
+    left: 20px;
+    top: 67px;
+    width: 812px;
+    height: 36px;
+    border: 1px #68492d;
+    background-color: #1c120b;
+    color: #f4be76;
+}
+#search-query span {
+    left: 10px;
+    top: 6px;
+    width: 790px;
+    height: 24px;
+    font-size: 17px;
+    line-height: 22px;
+}
+.filter-button {
+    width: 394px;
+    height: 38px;
+    border: 1px #68492d;
+    background-color: #382719;
+    color: #f4be76;
+}
+.filter-button span {
+    left: 8px;
+    top: 2px;
+    width: 376px;
+    height: 32px;
+    font-size: 14px;
+    line-height: 16px;
+}
+.filter-button-0 { left: 20px; top: 111px; }
+.filter-button-1 { left: 438px; top: 111px; }
+.filter-button-2 { left: 20px; top: 154px; }
+.filter-button-3 { left: 438px; top: 154px; }
+.search-action {
+    top: 199px;
+    width: 190px;
+    height: 36px;
+}
+.search-action span {
+    top: 6px;
+    height: 24px;
+    font-size: 16px;
+    line-height: 22px;
+}
+.search-reset {
+    left: 216px;
+    border: 1px #68492d;
+    background-color: #382719;
+    color: #e2a658;
+}
+.search-apply {
+    left: 430px;
+    border: 1px #f4be76;
+    background-color: #e2a658;
+    color: #24170e;
+}
+.credits-panel {
+    left: 535px;
+    top: 378px;
+    width: 850px;
+    height: 242px;
+    border: 2px #8a6a3c;
+    background-color: #2b1d13;
+}
+.credits-kicker {
+    left: 20px;
+    top: 17px;
+    color: #e2a658;
+    font-size: 16px;
+    line-height: 20px;
+}
+.credits-title {
+    left: 20px;
+    top: 44px;
+    width: 810px;
+    height: 36px;
+    color: #f4be76;
+    font-size: 28px;
+    line-height: 34px;
+}
+.credits-copy {
+    left: 20px;
+    top: 91px;
+    width: 812px;
+    height: 52px;
+    color: #bc7e39;
+    font-size: 17px;
+    line-height: 25px;
+}
+.credits-copy-0 { top: 91px; }
+.credits-url {
+    left: 20px;
+    top: 157px;
+    color: #e2a658;
+    font-size: 17px;
+    line-height: 23px;
+}
+#credits-close {
+    left: 620px;
+    top: 194px;
+    width: 190px;
+    height: 38px;
+    border: 1px #f4be76;
+    background-color: #e2a658;
+    color: #24170e;
+}
+#credits-close span {
+    top: 7px;
+    height: 23px;
+    font-size: 16px;
+    line-height: 21px;
 }
 
 /* Settings stays inside the radio's glass display so the physical backplate remains visible. */
@@ -563,183 +760,279 @@ body {
 }
 .settings-panel {
     position: absolute;
-    left: 462px;
-    top: 300px;
-    width: 990px;
+    left: 535px;
+    top: 378px;
+    width: 850px;
     height: 272px;
     overflow: hidden;
     border: 2px #8a6a3c;
-    background-color: #080f14;
+    background-color: #2b1d13;
 }
 .settings-kicker {
     position: absolute;
-    left: 26px;
-    top: 16px;
-    width: 480px;
-    height: 24px;
-    color: #d9a94d;
-    font-size: 20px;
-    line-height: 23px;
+    left: 20px;
+    top: 12px;
+    width: 440px;
+    height: 22px;
+    color: #e2a658;
+    font-size: 16px;
+    line-height: 20px;
 }
 .settings-title {
     position: absolute;
-    left: 26px;
-    top: 42px;
-    width: 460px;
-    height: 34px;
-    color: #eef3f5;
-    font-size: 28px;
-    line-height: 32px;
+    left: 20px;
+    top: 34px;
+    width: 430px;
+    height: 30px;
+    color: #f4be76;
+    font-size: 23px;
+    line-height: 28px;
 }
 .settings-current-list {
     position: absolute;
-    right: 28px;
-    top: 22px;
-    width: 400px;
-    height: 30px;
+    right: 20px;
+    top: 15px;
+    width: 330px;
+    height: 24px;
     overflow: hidden;
-    color: #d9a94d;
-    font-size: 20px;
-    line-height: 26px;
+    color: #e2a658;
+    font-size: 16px;
+    line-height: 21px;
     text-align: right;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 .settings-station-count {
     position: absolute;
-    right: 28px;
-    top: 50px;
-    width: 400px;
-    height: 24px;
-    color: #84959e;
-    font-size: 20px;
-    line-height: 23px;
+    right: 20px;
+    top: 39px;
+    width: 330px;
+    height: 20px;
+    color: #bc7e39;
+    font-size: 14px;
+    line-height: 18px;
+    text-align: right;
+}
+.settings-theme-row {
+    position: absolute;
+    left: 20px;
+    top: 72px;
+    width: 812px;
+    height: 42px;
+    border: 1px #68492d;
+    background-color: #382719;
+}
+.settings-theme-row.focused {
+    border: 2px #f4be76;
+    background-color: #50351d;
+}
+.settings-theme-label {
+    position: absolute;
+    left: 12px;
+    top: 9px;
+    width: 190px;
+    height: 23px;
+    color: #e2a658;
+    font-size: 16px;
+    line-height: 21px;
+}
+.settings-theme-value {
+    position: absolute;
+    left: 210px;
+    top: 9px;
+    width: 160px;
+    height: 23px;
+    color: #f4be76;
+    font-size: 16px;
+    line-height: 21px;
+}
+.settings-theme-help {
+    position: absolute;
+    right: 10px;
+    top: 9px;
+    width: 250px;
+    height: 23px;
+    color: #bc7e39;
+    font-size: 14px;
+    line-height: 21px;
     text-align: right;
 }
 .settings-volume-row {
     position: absolute;
-    left: 26px;
-    top: 82px;
-    width: 938px;
-    height: 50px;
-    border: 1px #263943;
-    background-color: #0b171e;
+    left: 20px;
+    top: 122px;
+    width: 812px;
+    height: 42px;
+    border: 1px #68492d;
+    background-color: #382719;
 }
 .settings-volume-label {
     position: absolute;
-    left: 14px;
-    top: 12px;
-    width: 190px;
-    height: 26px;
-    color: #d6dfe3;
-    font-size: 20px;
-    line-height: 24px;
+    left: 12px;
+    top: 9px;
+    width: 170px;
+    height: 23px;
+    color: #e2a658;
+    font-size: 16px;
+    line-height: 21px;
 }
 .settings-volume-value {
     position: absolute;
-    left: 210px;
-    top: 12px;
-    width: 76px;
-    height: 26px;
-    color: #eef3f5;
-    font-size: 20px;
-    line-height: 24px;
+    left: 190px;
+    top: 9px;
+    width: 64px;
+    height: 23px;
+    color: #f4be76;
+    font-size: 16px;
+    line-height: 21px;
     text-align: right;
 }
 .settings-volume-meter {
     position: absolute;
-    left: 302px;
-    top: 18px;
-    width: 390px;
-    height: 12px;
-    border: 1px #42515a;
-    background-color: #050a0e;
+    left: 270px;
+    top: 14px;
+    width: 330px;
+    height: 10px;
+    border: 1px #68492d;
+    background-color: #1c120b;
 }
 #settings-volume-fill {
     position: absolute;
     left: 0px;
     top: 0px;
-    width: 390px;
-    height: 10px;
-    background-color: #d9a94d;
+    width: 328px;
+    height: 8px;
+    background-color: #e2a658;
 }
 .settings-volume-help {
     position: absolute;
-    right: 12px;
-    top: 12px;
-    width: 220px;
-    height: 26px;
-    color: #84959e;
-    font-size: 20px;
-    line-height: 24px;
+    right: 10px;
+    top: 9px;
+    width: 190px;
+    height: 23px;
+    color: #bc7e39;
+    font-size: 14px;
+    line-height: 21px;
     text-align: right;
 }
 .settings-action {
     position: absolute;
-    top: 148px;
-    width: 450px;
-    height: 52px;
-    border: 1px #263943;
-    background-color: #0b171e;
-    color: #eef3f5;
+    top: 172px;
+    width: 394px;
+    height: 46px;
+    border: 1px #68492d;
+    background-color: #382719;
+    color: #f4be76;
 }
-.settings-favorites { left: 26px; }
-.settings-refresh { left: 512px; }
+.settings-favorites { left: 20px; }
+.settings-refresh { left: 438px; }
 .settings-action-title {
     position: absolute;
-    left: 12px;
-    top: 5px;
-    width: 260px;
-    height: 24px;
-    color: #eef3f5;
-    font-size: 20px;
-    line-height: 23px;
+    left: 10px;
+    top: 4px;
+    width: 240px;
+    height: 21px;
+    color: #f4be76;
+    font-size: 16px;
+    line-height: 20px;
 }
 .settings-action-detail {
     position: absolute;
-    right: 12px;
-    top: 5px;
-    width: 160px;
-    height: 24px;
+    right: 10px;
+    top: 4px;
+    width: 128px;
+    height: 21px;
     overflow: hidden;
-    color: #84959e;
-    font-size: 20px;
-    line-height: 23px;
+    color: #bc7e39;
+    font-size: 14px;
+    line-height: 20px;
     text-align: right;
     text-overflow: ellipsis;
 }
 .settings-action.focused {
-    border: 2px #d9a94d;
-    background-color: #13242c;
+    border: 2px #f4be76;
+    background-color: #50351d;
 }
 .settings-controls {
     position: absolute;
-    left: 26px;
-    top: 216px;
-    width: 938px;
-    height: 28px;
+    left: 20px;
+    top: 228px;
+    width: 812px;
+    height: 48px;
     overflow: hidden;
-    color: #84959e;
-    font-size: 20px;
-    line-height: 24px;
+    color: #bc7e39;
+    font-size: 15px;
+    line-height: 19px;
     text-align: center;
     text-overflow: ellipsis;
     white-space: nowrap;
 }
 #volume-level {
     position: absolute;
-    left: 1290px;
-    top: 292px;
-    width: 150px;
+    left: 540px;
+    top: 390px;
+    width: 128px;
     height: 26px;
     z-index: 12;
-    color: #d9a94d;
-    font-size: 20px;
-    line-height: 24px;
+    color: #e2a658;
+    font-size: 16px;
+    line-height: 20px;
     text-align: right;
 }
 
 /* The base stylesheet defines these state colours. Keep the physical skin's
    warm amber accent for the central playback state without adding effects. */
-#detail-status-dot.warning { background-color: #d9a94d; }
+#detail-status-dot.warning { background-color: #e2a658; }
 #detail-status-dot.error { background-color: #d56b65; }
+
+/* Keep navigation feedback inside the smoked display in the approved amber palette. */
+#search-query.focused,
+#search-query:focus,
+#filter-0.focused,
+#filter-0:focus,
+#filter-1.focused,
+#filter-1:focus,
+#filter-2.focused,
+#filter-2:focus,
+#filter-3.focused,
+#filter-3:focus,
+#search-reset.focused,
+#search-reset:focus {
+    border: 2px #f4be76;
+    background-color: #50351d;
+    color: #f4be76;
+}
+#search-apply.focused,
+#search-apply:focus,
+#credits-close.focused,
+#credits-close:focus {
+    border: 2px #f4be76;
+    background-color: #e2a658;
+    color: #24170e;
+}
+.settings-action:focus {
+    border: 2px #f4be76;
+    background-color: #50351d;
+}
+
+/* Stacked cabinet finishes and the control-atlas layer (manifest-hybrid.json). */
+#radio-backdrop-silver,
+#radio-backdrop-graphite {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 1920px;
+    height: 1080px;
+    z-index: 0;
+}
+.backdrop-hidden { visibility: hidden; }
+#controls-layer {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 1920px;
+    height: 1080px;
+    z-index: 2;
+}
+#controls-layer.hidden { visibility: hidden; }
+.btn-overlay { position: absolute; }

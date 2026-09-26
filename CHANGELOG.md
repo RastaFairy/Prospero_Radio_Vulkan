@@ -1,6 +1,6 @@
 # Registro de cambios — ProsperoRadio Vulkan Edition
 
-> **Versión actual del título: 01.000.017** · compilada y **ejecutable en consola PS5**.
+> **Versión actual del título: 01.000.018** · compilada y **ejecutable en consola PS5**.
 >
 > No confundir: *2.2.1* es la versión del paquete de interfaz original sobre el que se
 > construye este fork; *01.000.0XX* es la `contentVersion` que ve la consola en
@@ -31,6 +31,35 @@ El detalle técnico de cada build está en la **[MEMORIA.md](MEMORIA.md)**; este
 es el resumen para humanos.
 
 ---
+
+## 01.000.018 — 2026-09-26 · 🎛️ interfaz integrada + control rotatorio
+
+- **Frontal híbrido 4K**: el fondo pasa a `radio_front_hybrid_4k.ktx2` (fachada de
+  radio sobre la fotografía cálida, composición de Luna) con la geometría exacta del
+  manifiesto híbrido.
+- **Atlas de controles en marcha** (sprites de Luna): el dial de volumen muestra el
+  arco/aguja según el nivel real (21 frames, `volumen/5` redondeado), las flechas
+  ⏮/⏭ del sintonizador se iluminan en ámbar en la dirección del último salto de
+  emisora, y los siete botones físicos del frontal reflejan la vista activa.
+- **Volumen perceptual**: curva audio-taper (potencia 2.5) en `sceAudioOut` — el
+  recorrido completo del mando se oye de forma pareja (antes 50→100 % era casi plano).
+- **Potenciómetro rotatorio en los sticks**: girar el stick izquierdo (movimiento
+  circular) sube/baja volumen — vuelta completa ≈ 50 % — y el derecho salta emisoras
+  con el dial iluminándose en la dirección del giro. Zona muerta por radio y límite de
+  velocidad por paso; adiós al sube/baja vertical.
+- **Selector de acabado en Ajustes**: nueva fila «Cabinet Finish» (Walnut / Silver /
+  Graphite) con persistencia en `/download0/radio-theme.txt`. Walnut usa el híbrido 4K
+  con el atlas activo; Silver y Graphite usan sus frontales planos (cargados desde TGA
+  de 24 bpp, ahora soportados por el loader con orden de filas correcto).
+- **Ajustes dentro del cristal**: el panel se re-estila con la paleta LED del
+  manifiesto (#F4BE76 / #E2A658 / #BC7E39).
+
+**Pendiente / conocido:**
+
+- Descuadres de texto restantes en el catálogo (posiciones del grid sobre el frontal
+  híbrido).
+- Aro de foco del volumen aún sin activar (pendiente de cablear al gesto).
+- Variantes híbridas de Silver/Graphite para que el atlas alinee en todos los temas.
 
 ## 01.000.017 — 2026-09-26 · ✅ ejecutable en consola (validado por el autor)
 

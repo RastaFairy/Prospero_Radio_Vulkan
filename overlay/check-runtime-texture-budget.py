@@ -2,14 +2,15 @@
 """Validate the full-resolution KTX2 backplate and its bounded upload size."""
 
 from pathlib import Path
+import re
 import struct
 import sys
 
 
 OVERLAY = Path(__file__).resolve().parent
 RML = OVERLAY / "assets/ui/main.rml"
-SOURCE = OVERLAY / "assets/ui/art/radio_front_4k.tga"
-KTX2 = OVERLAY / "assets/ui/art/radio_front_4k.ktx2"
+ART = OVERLAY / "assets/ui/art"
+BACKPLATES = {"radio_front_4k.ktx2", "radio_front_hybrid_4k.ktx2"}
 KTX2_IDENTIFIER = bytes((0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A))
 VK_FORMAT_R8G8B8A8_UNORM = 37
 MAX_CONTAINER_BYTES = 48 * 1024 * 1024
@@ -22,12 +23,28 @@ def fail(message: str) -> None:
 
 def main() -> int:
     rml = RML.read_text(encoding="utf-8")
-    if 'src="art/radio_front_4k.ktx2"' not in rml:
-        fail(f"{RML} must use the full-resolution KTX2 backplate")
+    if len(sys.argv) > 2:
+        fail("usage: check-runtime-texture-budget.py [radio_front_4k.ktx2|radio_front_hybrid_4k.ktx2]")
+    if len(sys.argv) == 2:
+        texture_name = Path(sys.argv[1]).name
+        if texture_name not in BACKPLATES:
+            fail(f"unsupported backplate: {texture_name}")
+    else:
+        element = re.search(r'<img\b[^>]*\bid=["\']radio-backdrop["\'][^>]*>', rml)
+        source = re.search(r'\bsrc=["\']art/([^"\']+)["\']', element.group(0)) if element else None
+        if not source or source.group(1) not in BACKPLATES:
+            fail(f"{RML} must select one of: {', '.join(sorted(BACKPLATES))}")
+        texture_name = source.group(1)
+
+    KTX2 = ART / texture_name
+    SOURCE = ART / (KTX2.stem + ".tga")
+    if not SOURCE.is_file():
+        fail(f"Missing authoring source for selected backplate: {SOURCE}")
 
     with SOURCE.open("rb") as source:
         source_header = source.read(18)
-    if len(source_header) != 18 or source_header[2] != 2 or source_header[16] != 32:
+    if (len(source_header) != 18 or source_header[2] != 2 or source_header[16] != 32 or
+            (source_header[17] & 0x0f) != 8 or (source_header[17] & 0x30) != 0x20):
         fail(f"{SOURCE} must remain an uncompressed 32-bit full-resolution source TGA")
     source_size = struct.unpack_from("<HH", source_header, 12)
 
@@ -82,7 +99,7 @@ def main() -> int:
             fail(f"{KTX2.name} has overlapping mip payloads")
 
     print(
-        f"Runtime KTX2 validated: {KTX2.name} ({width}x{height}, {mip_levels} mips, "
+        f"Runtime KTX2 validated for {texture_name}: ({width}x{height}, {mip_levels} mips, "
         f"{total_gpu_bytes / 1048576:.2f} MiB GPU image, {STAGING_BYTES / 1048576:.0f} MiB upload staging)"
     )
     return 0

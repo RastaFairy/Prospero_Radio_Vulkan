@@ -2,10 +2,27 @@
     <head>
         <title>ProsperoRadio</title>
         <link type="text/rcss" href="styles/app.rcss" />
+        <link type="text/rcss" href="styles/controls.rcss" />
     </head>
     <body>
         <div id="app-shell">
-            <img id="radio-backdrop" src="art/radio_front_4k.ktx2" alt="" />
+            <img id="radio-backdrop" src="art/radio_front_hybrid_4k.ktx2" alt="" />
+            <img id="radio-backdrop-silver" class="backdrop-hidden" src="themes/radio-silver.tga" alt="" />
+            <img id="radio-backdrop-graphite" class="backdrop-hidden" src="themes/radio-graphite.tga" alt="" />
+
+            <div id="controls-layer">
+                <div id="volume-frame" class="volume-frame volume-frame-20"></div>
+                <div id="volume-focus-ring" class="volume-focus-ring hidden"></div>
+                <div id="tuner-frame" class="tuner-frame tuner-idle"></div>
+                <div id="btn-home" class="btn-overlay btn-home btn-home-normal"></div>
+                <div id="btn-radio" class="btn-overlay btn-radio btn-radio-selected"></div>
+                <div id="btn-favorites" class="btn-overlay btn-favorites btn-favorites-normal"></div>
+                <div id="btn-genres" class="btn-overlay btn-genres btn-genres-normal"></div>
+                <div id="btn-search" class="btn-overlay btn-search btn-search-normal"></div>
+                <div id="btn-settings" class="btn-overlay btn-settings btn-settings-normal"></div>
+                <div id="btn-play-pause" class="btn-overlay btn-play-pause btn-play-pause-normal"></div>
+            </div>
+
             <header id="header">
                 <img id="brand-mark" src="icons/prospero-radio.tga" width="56" height="56" alt="" />
                 <span id="brand-name">ProsperoRadio</span>
@@ -110,14 +127,15 @@
                     <div id="detail-divider"></div>
                     <span id="detail-status-dot" class="status-dot"></span>
                     <span id="detail-status">Ready to play</span>
-                    <button id="play-button">
-                        <span id="play-icon" aria-hidden="true">
-                            <img class="play-glyph" src="icons/play.tga" width="24" height="24" alt="" />
-                            <img class="stop-glyph" src="icons/stop.tga" width="24" height="24" alt="" />
-                        </span>
-                        <span id="play-label">Play station</span>
-                    </button>
                 </aside>
+
+                <button id="play-button">
+                    <span id="play-icon" aria-hidden="true">
+                        <img class="play-glyph" src="icons/play.tga" width="24" height="24" alt="" />
+                        <img class="stop-glyph" src="icons/stop.tga" width="24" height="24" alt="" />
+                    </span>
+                    <span id="play-label">Play station</span>
+                </button>
 
                 <section id="now-panel">
                     <span id="now-art" class="now-art">
@@ -167,11 +185,17 @@
                     <span id="settings-current-list" class="settings-current-list">Popular</span>
                     <span id="settings-station-count" class="settings-station-count">0 stations</span>
 
+                    <div id="settings-theme-row" class="settings-theme-row">
+                        <span class="settings-theme-label">CABINET FINISH</span>
+                        <span id="settings-theme-value" class="settings-theme-value">Walnut</span>
+                        <span class="settings-theme-help">Left / right: change, Cross applies</span>
+                    </div>
+
                     <div id="settings-volume-row" class="settings-volume-row">
                         <span class="settings-volume-label">OUTPUT VOLUME</span>
                         <span id="settings-volume-value" class="settings-volume-value">100%</span>
                         <span class="settings-volume-meter"><span id="settings-volume-fill"></span></span>
-                        <span class="settings-volume-help">Left stick up / down</span>
+                        <span class="settings-volume-help">Rotate left stick</span>
                     </div>
 
                     <button id="settings-favorites" class="settings-action settings-favorites">

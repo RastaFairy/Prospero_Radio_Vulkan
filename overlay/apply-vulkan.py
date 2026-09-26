@@ -8,8 +8,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from console_ux_patch import patch_console_ux
+
 UPSTREAM_SHA = "33898dd35375c1ae8370da137cfb6941d91c7684"
-VERSION = "01.000.017"
+VERSION = "01.000.018"
 
 # Fork of the boilerplate allocation runtime (overlay/src/app_cpp_runtime.cpp).
 # 01.000.016 redirected title stderr into /download0/prospero-radio.log and gave
@@ -1011,10 +1013,26 @@ def apply_ui_overlay(worktree: Path, overlay: Path) -> None:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
 
-    src = overlay / "assets/ui/art/radio_front_4k.ktx2"
-    dst = worktree / "assets/ui/art/radio_front_4k.ktx2"
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst)
+    for texture_name in ("radio_front_4k.ktx2", "radio_front_hybrid_4k.ktx2"):
+        src = overlay / "assets/ui/art" / texture_name
+        if not src.is_file():
+            if texture_name == "radio_front_hybrid_4k.ktx2":
+                continue
+            raise FileNotFoundError(f"Missing required Vulkan backplate: {src}")
+        dst = worktree / "assets/ui/art" / texture_name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+    # Keep modular control atlases in the materialized upstream asset tree so
+    # the package step includes them even before the app binds their UV frames.
+    control_source = overlay / "assets/ui/controls"
+    control_destination = worktree / "assets/ui/controls"
+    for source_asset in sorted(control_source.iterdir()):
+        if source_asset.suffix.lower() not in {".tga", ".json"}:
+            continue
+        destination_asset = control_destination / source_asset.name
+        destination_asset.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_asset, destination_asset)
 
 
 def main() -> int:
@@ -1034,6 +1052,7 @@ def main() -> int:
     patch_audio_service(worktree)
     patch_radio_app(worktree)
     patch_cpp_runtime(worktree)
+    patch_console_ux(worktree, overlay)
 
     main_cpp = worktree / "src" / "main.cpp"
     text = main_cpp.read_text(encoding="utf-8")

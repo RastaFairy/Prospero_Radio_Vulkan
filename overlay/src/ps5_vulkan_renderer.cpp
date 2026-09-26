@@ -2441,16 +2441,39 @@ bool Ps5VulkanRenderInterface::ReadTextureFile(const Rml::String &source,
                              static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height));
         return alpha_only;
     }
-    if (bytes.size() < 18 || bytes[0] != 0 || bytes[1] != 0 || bytes[2] != 2 || bytes[16] != 32 ||
-        (bytes[17] & 0x0f) != 8 || (bytes[17] & 0x30) != 0x20)
+    if (bytes.size() < 18 || bytes[0] != 0 || bytes[1] != 0 || bytes[2] != 2 ||
+        (bytes[16] != 24 && bytes[16] != 32) || (bytes[17] & 0x0f) != 8)
         return false;
     if (!ReadTextTextureHeader(bytes, width, height))
         return false;
-    const std::size_t pixel_bytes = static_cast<std::size_t>(width) * height * 4;
-    if (bytes.size() != 18 + pixel_bytes)
+    const bool top_down = (bytes[17] & 0x30) == 0x20;
+    const std::size_t source_stride = bytes[16] == 32 ? 4u : 3u;
+    const std::size_t pixel_count = static_cast<std::size_t>(width) * height;
+    const std::size_t source_bytes = pixel_count * source_stride;
+    if (bytes.size() != 18 + source_bytes)
         return false;
-    pixels.assign(bytes.begin() + 18, bytes.end());
-    // TGA is BGRA; the runtime intentionally keeps this ordering for the backplate path.
+    // TGA is BGRA; the runtime intentionally keeps this ordering for the backplate
+    // path. 24-bit sources (the cabinet finish themes) expand to 32-bit with
+    // opaque alpha, honouring the TGA row order.
+    const std::uint8_t *source_data = bytes.data() + 18;
+    pixels.assign(pixel_count * 4, 255);
+    for (std::size_t row = 0; row < static_cast<std::size_t>(height); ++row)
+    {
+        const std::size_t destination_row_index =
+            top_down ? row : (static_cast<std::size_t>(height) - 1U - row);
+        const std::uint8_t *source_row =
+            source_data + row * static_cast<std::size_t>(width) * source_stride;
+        std::uint8_t *destination_row =
+            pixels.data() + destination_row_index * static_cast<std::size_t>(width) * 4;
+        for (std::size_t column = 0; column < static_cast<std::size_t>(width); ++column)
+        {
+            destination_row[column * 4 + 0] = source_row[column * source_stride + 0];
+            destination_row[column * 4 + 1] = source_row[column * source_stride + 1];
+            destination_row[column * 4 + 2] = source_row[column * source_stride + 2];
+            if (source_stride == 4)
+                destination_row[column * 4 + 3] = source_row[column * 4 + 3];
+        }
+    }
     return true;
 }
 
