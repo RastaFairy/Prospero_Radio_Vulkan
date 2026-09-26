@@ -110,6 +110,17 @@ std::FILE *OpenAssetFile(const char *path)
         char app_path[1024];
         std::snprintf(app_path, sizeof(app_path), "/app0/%s", path);
         file = std::fopen(app_path, "rb");
+        /* Spritesheet sources arrive stylesheet-relative ("../controls/x.tga");
+         * resolve them against the UI asset root. */
+        if (!file && std::strstr(path, ".."))
+        {
+            const char *stripped = path;
+            while (std::strncmp(stripped, "../", 3) == 0)
+                stripped += 3;
+            char ui_path[1024];
+            std::snprintf(ui_path, sizeof(ui_path), "/app0/assets/ui/%s", stripped);
+            file = std::fopen(ui_path, "rb");
+        }
     }
     return file;
 }
@@ -2490,6 +2501,7 @@ bool Ps5VulkanRenderInterface::LoadTexture(Rml::TextureHandle &texture_handle,
     int width = 0;
     int height = 0;
     bool alpha_only = false;
+    std::fprintf(stderr, "[PS5-Vulkan] LoadTexture: %s\n", source.c_str());
     if (!ReadTextureFile(source, pixels, width, height, alpha_only))
         return false;
 

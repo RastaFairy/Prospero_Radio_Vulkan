@@ -790,7 +790,7 @@ body {
 }
 .settings-current-list {
     position: absolute;
-    right: 20px;
+    left: 430px;
     top: 15px;
     width: 330px;
     height: 24px;
@@ -804,7 +804,7 @@ body {
 }
 .settings-station-count {
     position: absolute;
-    right: 20px;
+    left: 430px;
     top: 39px;
     width: 330px;
     height: 20px;
@@ -848,7 +848,7 @@ body {
 }
 .settings-theme-help {
     position: absolute;
-    right: 10px;
+    left: 420px;
     top: 9px;
     width: 250px;
     height: 23px;
@@ -906,7 +906,7 @@ body {
 }
 .settings-volume-help {
     position: absolute;
-    right: 10px;
+    left: 560px;
     top: 9px;
     width: 190px;
     height: 23px;
@@ -938,7 +938,7 @@ body {
 }
 .settings-action-detail {
     position: absolute;
-    right: 10px;
+    left: 230px;
     top: 4px;
     width: 128px;
     height: 21px;
@@ -967,19 +967,6 @@ body {
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-#volume-level {
-    position: absolute;
-    left: 540px;
-    top: 390px;
-    width: 128px;
-    height: 26px;
-    z-index: 12;
-    color: #e2a658;
-    font-size: 16px;
-    line-height: 20px;
-    text-align: right;
-}
-
 /* The base stylesheet defines these state colours. Keep the physical skin's
    warm amber accent for the central playback state without adding effects. */
 #detail-status-dot.warning { background-color: #e2a658; }
@@ -1037,7 +1024,9 @@ body {
 #controls-layer.hidden { visibility: hidden; }
 .btn-overlay { position: absolute; }
 
-/* --- Physical-radio display (01.000.019) ---------------------------------
+.hidden { visibility: hidden; }
+
+/* --- Physical-radio display (01.000.020) ---------------------------------
    One glass surface at a time inside the manifest content rect. */
 #display {
     position: absolute;
@@ -1048,55 +1037,55 @@ body {
     z-index: 10;
     overflow: hidden;
 }
-#screen-home { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; }
+#screen-home { position: absolute; left: 0px; top: 0px; width: 888px; height: 228px; }
 #home-kicker {
     position: absolute; left: 8px; top: 6px; width: 300px; height: 22px;
     color: #bc7e39; font-size: 15px; line-height: 20px;
 }
 #home-name {
-    position: absolute; left: 8px; top: 30px; width: 640px; height: 42px;
-    color: #f4be76; font-size: 32px; line-height: 40px;
+    position: absolute; left: 8px; top: 28px; width: 860px; height: 44px;
+    color: #f4be76; font-size: 32px; line-height: 42px;
     overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 #home-meta {
-    position: absolute; left: 8px; top: 76px; width: 640px; height: 24px;
+    position: absolute; left: 8px; top: 78px; width: 700px; height: 24px;
     color: #e2a658; font-size: 17px; line-height: 22px;
     overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 #home-status {
-    position: absolute; right: 8px; top: 8px; width: 230px; height: 24px;
-    color: #e2a658; font-size: 16px; line-height: 22px; text-align: right;
+    position: absolute; left: 640px; top: 8px; width: 240px; height: 22px;
+    color: #e2a658; font-size: 15px; line-height: 20px; text-align: right;
 }
 #home-status.warning { color: #e2a658; }
 #home-status.error { color: #d56b65; }
 #home-hint {
-    position: absolute; left: 8px; bottom: 4px; width: 560px; height: 22px;
+    position: absolute; left: 8px; top: 202px; width: 620px; height: 22px;
     color: #bc7e39; font-size: 14px; line-height: 20px;
 }
 #volume-level {
-    position: absolute; right: 8px; bottom: 6px; width: 110px; height: 30px;
+    position: absolute; left: 756px; top: 188px; width: 124px; height: 34px;
     border: 1px #68492d; background-color: #1c120b; border-radius: 5px;
-    color: #f4be76; font-size: 18px; line-height: 28px; text-align: center;
+    color: #f4be76; font-size: 18px; line-height: 32px; text-align: center;
 }
 #eq {
-    position: absolute; right: 140px; bottom: 8px; width: 90px; height: 30px;
+    position: absolute; left: 620px; top: 194px; width: 120px; height: 30px;
 }
 .eq-bar {
     position: absolute; bottom: 0px; width: 10px;
     background-color: #e2a658;
 }
-#eq-0 { left: 0px; } #eq-1 { left: 20px; } #eq-2 { left: 40px; }
-#eq-3 { left: 60px; } #eq-4 { left: 80px; }
+#eq-0 { left: 0px; } #eq-1 { left: 24px; } #eq-2 { left: 48px; }
+#eq-3 { left: 72px; } #eq-4 { left: 96px; }
 
 #screen-list, #screen-genres {
-    position: absolute; left: 0px; top: 0px; width: 100%; height: 100%;
+    position: absolute; left: 0px; top: 0px; width: 888px; height: 228px;
 }
 #list-title, #genres-title {
     position: absolute; left: 8px; top: 4px; width: 500px; height: 22px;
     color: #bc7e39; font-size: 15px; line-height: 20px;
 }
 #list-status, #genres-status {
-    position: absolute; right: 8px; top: 4px; width: 300px; height: 22px;
+    position: absolute; left: 560px; top: 4px; width: 320px; height: 22px;
     color: #bc7e39; font-size: 15px; line-height: 20px; text-align: right;
 }
 .list-row {
@@ -1117,25 +1106,37 @@ body {
 }
 .list-row.cursor .list-cursor { visibility: visible; }
 .list-name {
-    position: absolute; left: 26px; top: 2px; width: 470px; height: 21px;
+    position: absolute; left: 26px; top: 2px; width: 440px; height: 21px;
     color: #f4be76; font-size: 17px; line-height: 21px;
     overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 .list-meta {
-    position: absolute; right: 30px; top: 3px; width: 300px; height: 20px;
+    position: absolute; left: 470px; top: 3px; width: 360px; height: 20px;
     color: #bc7e39; font-size: 14px; line-height: 19px;
     text-align: right; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
 .list-fav {
-    position: absolute; right: 8px; top: 2px; width: 18px; height: 21px;
+    position: absolute; left: 840px; top: 2px; width: 18px; height: 21px;
     color: #f4be76; font-size: 15px; line-height: 21px;
-    text-align: center; visibility: hidden;
+    text-align: center;
 }
-.list-fav:not(.hidden) { visibility: visible; }
 .list-count {
-    position: absolute; right: 12px; top: 2px; width: 90px; height: 21px;
+    position: absolute; left: 770px; top: 2px; width: 90px; height: 21px;
     color: #bc7e39; font-size: 15px; line-height: 21px; text-align: right;
 }
+#search-panel {
+    position: absolute; left: 0px; top: 0px; width: 888px; height: 228px;
+    background-color: transparent;
+}
+.search-query-button { position: absolute; left: 20px; top: 70px; width: 812px; height: 42px; }
+.search-query-label {
+    position: absolute; left: 12px; top: 4px; width: 780px; height: 30px;
+    color: #f4be76; font-size: 17px; line-height: 26px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+#filter-1 { position: absolute; left: 20px; top: 122px; width: 394px; height: 46px; }
+#filter-3 { position: absolute; left: 438px; top: 122px; width: 394px; height: 46px; }
+#search-apply { position: absolute; left: 20px; top: 178px; width: 812px; height: 42px; }
 #search-panel {
     position: absolute; left: 0px; top: 0px; width: 100%; height: 100%;
     background-color: transparent;
