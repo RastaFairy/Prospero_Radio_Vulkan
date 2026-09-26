@@ -562,7 +562,6 @@ def generate_controls_assets(overlay: Path, worktree: Path, version: str) -> Non
         css.append(
             f".btn-rect-{control.replace('_', '-')} {{ position: absolute; {rect_css(info['targetRect'])} }}"
         )
-    css.append(".frame-img { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; }")
     css.append("")
 
     rml = ['<div id="controls-layer">']
