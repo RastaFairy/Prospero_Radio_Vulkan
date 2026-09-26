@@ -1,6 +1,6 @@
 # Registro de cambios — ProsperoRadio Vulkan Edition
 
-> **Versión actual del título: 01.000.018** · compilada y **ejecutable en consola PS5**.
+> **Versión actual del título: 01.000.019** · compilada y **ejecutable en consola PS5**.
 >
 > No confundir: *2.2.1* es la versión del paquete de interfaz original sobre el que se
 > construye este fork; *01.000.0XX* es la `contentVersion` que ve la consola en
@@ -31,6 +31,27 @@ El detalle técnico de cada build está en la **[MEMORIA.md](MEMORIA.md)**; este
 es el resumen para humanos.
 
 ---
+
+## 01.000.019 — 2026-09-26 · 🔁 frontend rehecho como radio física
+
+**Rediseño completo del frontend**: la lógica antigua (grid de tarjetas, pestañas,
+paginación, pie de mandos) desaparece; la interfaz se comporta como la radio que
+imita.
+
+- **Los 7 botones físicos SON la navegación**: cruceta ←→ mueve el "dedo" por los
+  botones del frontal (estados focus/selected/pressed del atlas de Luna) y ✕ los
+  pulsa: Home, Radio, Favoritos, Géneros, Buscar, Ajustes, Play/Pausa.
+- **Dial derecho = sintonizar**: girar recorre el catálogo entero y sintoniza al
+  momento si estaba sonando (como una radio de verdad); las flechas ⏮/⏭ del atlas se
+  iluminan en la dirección del giro.
+- **Dial izquierdo = volumen** con curva perceptual.
+- **Listas dentro del cristal**: Radio/Favoritos muestran 7 filas navegables con el
+  dial (✕ sintoniza la fila, □ favorito, ←/→ cambia de lista); Géneros lista los
+  géneros y ✕ filtra.
+- **Cristal único**: Home muestra emisora sintonizada, códec/bitrate, estado de
+  reproducción y ecualizador animado, con la paleta LED del manifiesto.
+- `radio_app.cpp/.hpp` se sustituyen enteros desde el overlay (adiós a los parches
+  frágiles sobre la capa de UI antigua).
 
 ## 01.000.018 — 2026-09-26 · 🎛️ interfaz integrada + control rotatorio
 

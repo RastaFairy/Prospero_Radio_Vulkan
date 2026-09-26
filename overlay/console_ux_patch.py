@@ -545,8 +545,8 @@ def generate_controls_rcss(overlay: Path, worktree: Path) -> None:
 
 def patch_console_ux(worktree: Path, overlay: Path) -> None:
     src = worktree / "src"
-    include = worktree / "include"
+    # radio_app.cpp/.hpp ship complete from the overlay (theme, atlas frames and
+    # the physical-button state machine are native there now).
     patch_volume_taper(src)
     patch_rotary_sticks(src)
-    patch_radio_app_theme(src, include)
     generate_controls_rcss(overlay, worktree)

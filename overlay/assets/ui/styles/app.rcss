@@ -1036,3 +1036,116 @@ body {
 }
 #controls-layer.hidden { visibility: hidden; }
 .btn-overlay { position: absolute; }
+
+/* --- Physical-radio display (01.000.019) ---------------------------------
+   One glass surface at a time inside the manifest content rect. */
+#display {
+    position: absolute;
+    left: 516px;
+    top: 384px;
+    width: 888px;
+    height: 228px;
+    z-index: 10;
+    overflow: hidden;
+}
+#screen-home { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; }
+#home-kicker {
+    position: absolute; left: 8px; top: 6px; width: 300px; height: 22px;
+    color: #bc7e39; font-size: 15px; line-height: 20px;
+}
+#home-name {
+    position: absolute; left: 8px; top: 30px; width: 640px; height: 42px;
+    color: #f4be76; font-size: 32px; line-height: 40px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+#home-meta {
+    position: absolute; left: 8px; top: 76px; width: 640px; height: 24px;
+    color: #e2a658; font-size: 17px; line-height: 22px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+#home-status {
+    position: absolute; right: 8px; top: 8px; width: 230px; height: 24px;
+    color: #e2a658; font-size: 16px; line-height: 22px; text-align: right;
+}
+#home-status.warning { color: #e2a658; }
+#home-status.error { color: #d56b65; }
+#home-hint {
+    position: absolute; left: 8px; bottom: 4px; width: 560px; height: 22px;
+    color: #bc7e39; font-size: 14px; line-height: 20px;
+}
+#volume-level {
+    position: absolute; right: 8px; bottom: 6px; width: 110px; height: 30px;
+    border: 1px #68492d; background-color: #1c120b; border-radius: 5px;
+    color: #f4be76; font-size: 18px; line-height: 28px; text-align: center;
+}
+#eq {
+    position: absolute; right: 140px; bottom: 8px; width: 90px; height: 30px;
+}
+.eq-bar {
+    position: absolute; bottom: 0px; width: 10px;
+    background-color: #e2a658;
+}
+#eq-0 { left: 0px; } #eq-1 { left: 20px; } #eq-2 { left: 40px; }
+#eq-3 { left: 60px; } #eq-4 { left: 80px; }
+
+#screen-list, #screen-genres {
+    position: absolute; left: 0px; top: 0px; width: 100%; height: 100%;
+}
+#list-title, #genres-title {
+    position: absolute; left: 8px; top: 4px; width: 500px; height: 22px;
+    color: #bc7e39; font-size: 15px; line-height: 20px;
+}
+#list-status, #genres-status {
+    position: absolute; right: 8px; top: 4px; width: 300px; height: 22px;
+    color: #bc7e39; font-size: 15px; line-height: 20px; text-align: right;
+}
+.list-row {
+    position: absolute; left: 8px; width: 872px; height: 25px;
+    border-radius: 4px;
+}
+.list-row.cursor { background-color: #50351d; }
+#list-row-0, #genre-row-0 { top: 30px; }
+#list-row-1, #genre-row-1 { top: 56px; }
+#list-row-2, #genre-row-2 { top: 82px; }
+#list-row-3, #genre-row-3 { top: 108px; }
+#list-row-4, #genre-row-4 { top: 134px; }
+#list-row-5, #genre-row-5 { top: 160px; }
+#list-row-6, #genre-row-6 { top: 186px; }
+.list-cursor {
+    position: absolute; left: 4px; top: 2px; width: 18px; height: 21px;
+    color: #f4be76; font-size: 14px; line-height: 21px; visibility: hidden;
+}
+.list-row.cursor .list-cursor { visibility: visible; }
+.list-name {
+    position: absolute; left: 26px; top: 2px; width: 470px; height: 21px;
+    color: #f4be76; font-size: 17px; line-height: 21px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.list-meta {
+    position: absolute; right: 30px; top: 3px; width: 300px; height: 20px;
+    color: #bc7e39; font-size: 14px; line-height: 19px;
+    text-align: right; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.list-fav {
+    position: absolute; right: 8px; top: 2px; width: 18px; height: 21px;
+    color: #f4be76; font-size: 15px; line-height: 21px;
+    text-align: center; visibility: hidden;
+}
+.list-fav:not(.hidden) { visibility: visible; }
+.list-count {
+    position: absolute; right: 12px; top: 2px; width: 90px; height: 21px;
+    color: #bc7e39; font-size: 15px; line-height: 21px; text-align: right;
+}
+#search-panel {
+    position: absolute; left: 0px; top: 0px; width: 100%; height: 100%;
+    background-color: transparent;
+}
+.search-query-button { position: absolute; left: 20px; top: 70px; width: 812px; height: 42px; }
+.search-query-label {
+    position: absolute; left: 12px; top: 4px; width: 780px; height: 30px;
+    color: #f4be76; font-size: 17px; line-height: 26px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+#filter-1 { position: absolute; left: 20px; top: 122px; width: 394px; height: 46px; }
+#filter-3 { position: absolute; left: 438px; top: 122px; width: 394px; height: 46px; }
+#search-apply { position: absolute; left: 20px; top: 178px; width: 812px; height: 42px; }

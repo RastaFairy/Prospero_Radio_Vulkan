@@ -11,7 +11,7 @@ from pathlib import Path
 from console_ux_patch import patch_console_ux
 
 UPSTREAM_SHA = "33898dd35375c1ae8370da137cfb6941d91c7684"
-VERSION = "01.000.018"
+VERSION = "01.000.019"
 
 # Fork of the boilerplate allocation runtime (overlay/src/app_cpp_runtime.cpp).
 # 01.000.016 redirected title stderr into /download0/prospero-radio.log and gave
@@ -993,20 +993,8 @@ void RadioApp::SetView(int direction)""",
 
 
 def apply_ui_overlay(worktree: Path, overlay: Path) -> None:
-    include = worktree / "include" / "radio_app.hpp"
-    replace_once(include,
-                 "    static constexpr unsigned CardCount = 4;",
-                 "    static constexpr unsigned CardCount = 6;")
-
-    cpp = worktree / "src" / "radio_app.cpp"
-    replace_once(cpp, "constexpr unsigned kFocusDiscover = 4;", "constexpr unsigned kFocusDiscover = 6;")
-    replace_once(cpp, "constexpr unsigned kFocusPlay = 7;", "constexpr unsigned kFocusPlay = 9;")
-    replace_once(cpp, "constexpr unsigned kFocusCredits = 8;", "constexpr unsigned kFocusCredits = 10;")
-
-    old_navigation = """        if (key == RADIO_INPUT_CROSS)\n            TogglePlayback();\n        else if (key == RADIO_INPUT_LEFT && (slot & 1U))\n            focus_ = selected_slot_ = slot - 1;\n        else if (key == RADIO_INPUT_RIGHT)\n        {\n            if (!(slot & 1U) && card_stations_[slot + 1] != InvalidStation)\n                focus_ = selected_slot_ = slot + 1;\n            else\n                focus_ = kFocusPlay;\n        }\n        else if (key == RADIO_INPUT_UP)\n        {\n            if (slot >= 2)\n                focus_ = selected_slot_ = slot - 2;\n            else\n            {\n                ChangePage(-1, slot + 2);\n                return;\n            }\n        }\n        else if (key == RADIO_INPUT_DOWN)\n        {\n            if (slot < 2 && card_stations_[slot + 2] != InvalidStation)\n                focus_ = selected_slot_ = slot + 2;\n            else if (page_start_ + CardCount < visible_count_)\n            {\n                ChangePage(1, slot & 1U);\n                return;\n            }\n            else if (view_ == View::Discover)\n                focus_ = kFocusDiscover + slot % 3;\n            else\n                focus_ = kFocusPlay;\n        }"""
-    new_navigation = """        if (key == RADIO_INPUT_CROSS)\n            TogglePlayback();\n        else if (key == RADIO_INPUT_LEFT)\n        {\n            if ((slot % 3U) != 0U)\n                focus_ = selected_slot_ = slot - 1U;\n        }\n        else if (key == RADIO_INPUT_RIGHT)\n        {\n            if ((slot % 3U) != 2U && card_stations_[slot + 1U] != InvalidStation)\n                focus_ = selected_slot_ = slot + 1U;\n            else\n                focus_ = kFocusPlay;\n        }\n        else if (key == RADIO_INPUT_UP)\n        {\n            const unsigned row = slot / 3U;\n            if (row > 0U && card_stations_[slot - 3U] != InvalidStation)\n                focus_ = selected_slot_ = slot - 3U;\n            else\n            {\n                ChangePage(-1, slot + 3U);\n                return;\n            }\n        }\n        else if (key == RADIO_INPUT_DOWN)\n        {\n            const unsigned row = slot / 3U;\n            if (row < 1U && card_stations_[slot + 3U] != InvalidStation)\n                focus_ = selected_slot_ = slot + 3U;\n            else if (page_start_ + CardCount < visible_count_)\n            {\n                ChangePage(1, slot % 3U);\n                return;\n            }\n            else if (view_ == View::Discover)\n                focus_ = kFocusDiscover + slot % 3U;\n            else\n                focus_ = kFocusPlay;\n        }"""
-    replace_once(cpp, old_navigation, new_navigation)
-
+    # The physical-radio frontend ships complete overlay sources for
+    # radio_app.cpp/.hpp; upstream files are replaced wholesale further down.
     for relative in ("assets/ui/main.rml", "assets/ui/styles/app.rcss"):
         src = overlay / relative
         dst = worktree / relative
@@ -1022,6 +1010,15 @@ def apply_ui_overlay(worktree: Path, overlay: Path) -> None:
         dst = worktree / "assets/ui/art" / texture_name
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+
+    # Cabinet finish themes (24-bit flat fronts)
+    theme_source = overlay / "assets/ui/themes"
+    theme_destination = worktree / "assets/ui/themes"
+    for source_asset in sorted(theme_source.iterdir()):
+        if source_asset.suffix.lower() != ".tga":
+            continue
+        theme_destination.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_asset, theme_destination / source_asset.name)
 
     # Keep modular control atlases in the materialized upstream asset tree so
     # the package step includes them even before the app binds their UV frames.
@@ -1050,7 +1047,10 @@ def main() -> int:
     apply_ui_overlay(worktree, overlay)
     patch_controller_input(worktree)
     patch_audio_service(worktree)
-    patch_radio_app(worktree)
+    # The physical-radio frontend ships complete sources: replace the upstream
+    # application layer wholesale instead of anchoring patches to it.
+    shutil.copy2(overlay / "include/radio_app.hpp", worktree / "include/radio_app.hpp")
+    shutil.copy2(overlay / "src/radio_app.cpp", worktree / "src/radio_app.cpp")
     patch_cpp_runtime(worktree)
     patch_console_ux(worktree, overlay)
 
