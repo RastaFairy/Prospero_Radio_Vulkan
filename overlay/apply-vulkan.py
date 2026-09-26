@@ -11,7 +11,7 @@ from pathlib import Path
 from console_ux_patch import patch_console_ux
 
 UPSTREAM_SHA = "33898dd35375c1ae8370da137cfb6941d91c7684"
-VERSION = "01.000.020"
+VERSION = "01.000.021"
 
 # Fork of the boilerplate allocation runtime (overlay/src/app_cpp_runtime.cpp).
 # 01.000.016 redirected title stderr into /download0/prospero-radio.log and gave
@@ -1052,7 +1052,7 @@ def main() -> int:
     shutil.copy2(overlay / "include/radio_app.hpp", worktree / "include/radio_app.hpp")
     shutil.copy2(overlay / "src/radio_app.cpp", worktree / "src/radio_app.cpp")
     patch_cpp_runtime(worktree)
-    patch_console_ux(worktree, overlay)
+    patch_console_ux(worktree, overlay, VERSION)
 
     main_cpp = worktree / "src" / "main.cpp"
     text = main_cpp.read_text(encoding="utf-8")

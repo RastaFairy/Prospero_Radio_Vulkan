@@ -461,92 +461,149 @@ void RadioApp::ApplyTunerFrame()
     )
 
 
-def generate_controls_rcss(overlay: Path, worktree: Path) -> None:
+def split_atlas(overlay: Path, worktree: Path) -> dict:
+    """Split the control atlases into per-frame 32-bit TGAs (pure python, no
+    Pillow): the RmlUi sprite decorators never rendered on the console, so the
+    runtime uses stacked <img> elements with visibility toggles instead."""
     manifest = json.loads(
         (overlay / "assets/ui/controls/manifest-hybrid.json").read_text(encoding="utf-8")
     )
-    lines = [
-        "/* Generated at build time from controls/manifest-hybrid.json — do not edit. */",
-        "",
-    ]
+    destination = worktree / "assets" / "ui" / "controls" / "frames"
+    destination.mkdir(parents=True, exist_ok=True)
 
-    def sprite_block(name: str, file: str, frames: list[tuple[str, int, int, int, int]], cell: tuple[int, int], gutter: int) -> None:
-        lines.append(f"@spritesheet {name} {{")
-        lines.append(f"    src: ../controls/{file};")
-        core_w, core_h = cell[0] - 2 * gutter, cell[1] - 2 * gutter
-        for sprite, x, y, _w, _h in frames:
-            lines.append(f"    {sprite}: {x + gutter}px {y + gutter}px {core_w}px {core_h}px;")
-        lines.append("}")
-        lines.append("")
+    def read_tga(path: Path):
+        data = path.read_bytes()
+        width = data[12] | (data[13] << 8)
+        height = data[14] | (data[15] << 8)
+        bpp = data[16]
+        top_down = (data[17] & 0x30) == 0x20
+        pixels = data[18 + data[0]:]
+        return width, height, bpp, top_down, pixels
+
+    def crop(src, rect):
+        width, height, bpp, top_down, pixels = src
+        stride = bpp // 8
+        x, y, w, h = rect
+        row_bytes = w * stride
+        out = bytearray(row_bytes * h)
+        for row in range(h):
+            source_row = y + row if top_down else y + h - 1 - row
+            offset = ((source_row * width) + x) * stride
+            out[row * row_bytes:(row + 1) * row_bytes] = pixels[offset:offset + row_bytes]
+        return w, h, out
+
+    def write_tga(path: Path, width, height, pixels):
+        header = bytearray(18)
+        header[2] = 2
+        header[12] = width & 0xFF
+        header[13] = (width >> 8) & 0xFF
+        header[14] = height & 0xFF
+        header[15] = (height >> 8) & 0xFF
+        header[16] = 32
+        header[17] = 0x20
+        path.write_bytes(bytes(header) + bytes(pixels))
+
+    frames = {}
+
+    def emit(source_path: Path, rect, name: str, gutter: int):
+        src = read_tga(source_path)
+        x, y, w, h = rect
+        core = (x + gutter, y + gutter, w - 2 * gutter, h - 2 * gutter)
+        width, height, pixels = crop(src, core)
+        file_name = f"{name}.tga"
+        write_tga(destination / file_name, width, height, pixels)
+        frames[name] = {"file": f"controls/frames/{file_name}", "rect": [float(x) for x in rect]}
 
     volume = manifest["volume"]
-    vol_gutter = volume["extrudedGutterPx"]
-    frames = [
-        (f"volume_frame_{level['index']:02d}", level["x"], level["y"], level["width"], level["height"])
-        for level in volume["levels"]
-    ]
+    vg = volume["extrudedGutterPx"]
+    for level in volume["levels"]:
+        emit(overlay / "assets/ui/controls" / volume["file"],
+             (level["x"], level["y"], level["width"], level["height"]),
+             f"volume_frame_{level['index']:02d}", vg)
     focus = volume["focusOverlay"]
-    frames.append(("volume_focus_ring", focus["x"], focus["y"], focus["width"], focus["height"]))
-    sprite_block("volume-atlas", volume["file"], frames, volume["cell"], vol_gutter)
+    emit(overlay / "assets/ui/controls" / volume["file"],
+         (focus["x"], focus["y"], focus["width"], focus["height"]), "volume_focus_ring", vg)
 
     tuner = manifest["tuner"]
-    tuner_frames = [
-        (sprite, frame["x"], frame["y"], frame["width"], frame["height"])
-        for sprite, frame in tuner["frames"].items()
-    ]
-    sprite_block("tuner-atlas", tuner["file"], tuner_frames, tuner["cell"], tuner["extrudedGutterPx"])
+    tg = tuner["extrudedGutterPx"]
+    for state, frame in tuner["frames"].items():
+        emit(overlay / "assets/ui/controls" / tuner["file"],
+             (frame["x"], frame["y"], frame["width"], frame["height"]),
+             f"tuner_{state}", tg)
 
     buttons = manifest["buttons"]
-    button_frames = []
+    bg = buttons["extrudedGutterPx"]
     for control, info in buttons["controls"].items():
         for state, frame in info["frames"].items():
-            button_frames.append((f"btn_{control}_{state}", frame["x"], frame["y"], frame["width"], frame["height"]))
-    sprite_block("buttons-atlas", buttons["file"], button_frames, buttons["cell"], buttons["extrudedGutterPx"])
+            emit(overlay / "assets/ui/controls" / buttons["file"],
+                 (frame["x"], frame["y"], frame["width"], frame["height"]),
+                 f"btn_{control}_{state}", bg)
+    return frames
 
-    vx, vy, vw, vh = volume["logicalTargetRect"]
-    lines.append(
-        f"#volume-frame {{ position: absolute; left: {vx:.1f}px; top: {vy:.1f}px; "
-        f"width: {vw:.1f}px; height: {vh:.1f}px; }}"
-    )
-    for index in range(21):
-        lines.append(f'.volume-frame-{index} {{ decorator: sprite("volume_frame_{index:02d}"); }}')
-    lines.append(
-        f"#volume-focus-ring {{ position: absolute; left: {vx:.1f}px; top: {vy:.1f}px; "
-        f"width: {vw:.1f}px; height: {vh:.1f}px; }}"
-    )
-    lines.append('.volume-focus-ring-on { decorator: sprite("volume_focus_ring"); }')
-    lines.append("")
 
-    tx, ty, tw, th = tuner["targetRect"]
-    lines.append(
-        f"#tuner-frame {{ position: absolute; left: {tx:.1f}px; top: {ty:.1f}px; "
-        f"width: {tw:.1f}px; height: {th:.1f}px; }}"
+def generate_controls_assets(overlay: Path, worktree: Path, version: str) -> None:
+    frames = split_atlas(overlay, worktree)
+    manifest = json.loads(
+        (overlay / "assets/ui/controls/manifest-hybrid.json").read_text(encoding="utf-8")
     )
-    lines.append('.tuner-idle { decorator: sprite("tuner_idle"); }')
-    lines.append('.tuner-prev { decorator: sprite("tuner_previous_focus"); }')
-    lines.append('.tuner-next { decorator: sprite("tuner_next_focus"); }')
-    lines.append("")
 
-    for control, info in buttons["controls"].items():
-        x, y, w, h = info["targetRect"]
-        element = f"btn-{control.replace('_', '-')}"
-        lines.append(
-            f"#{element} {{ position: absolute; left: {x:.1f}px; top: {y:.1f}px; "
-            f"width: {w:.1f}px; height: {h:.1f}px; }}"
+    def rect_css(rect):
+        x, y, w, h = rect
+        return f"left: {x:.1f}px; top: {y:.1f}px; width: {w:.1f}px; height: {h:.1f}px;"
+
+    css = ["/* Generated at build time from controls/manifest-hybrid.json. */", ""]
+    volume_rect = rect_css(manifest["volume"]["logicalTargetRect"])
+    css.append(f".volume-frame-img {{ position: absolute; {volume_rect} }}")
+    tuner_rect = rect_css(manifest["tuner"]["targetRect"])
+    css.append(f".tuner-frame-img {{ position: absolute; {tuner_rect} }}")
+    for control, info in manifest["buttons"]["controls"].items():
+        css.append(
+            f".btn-rect-{control.replace('_', '-')} {{ position: absolute; {rect_css(info['targetRect'])} }}"
         )
-        lines.append(f'.{element}-normal {{ decorator: sprite("btn_{control}_normal"); }}')
-        lines.append(f'.{element}-selected {{ decorator: sprite("btn_{control}_selected"); }}')
-    lines.append("")
+    css.append(".frame-img { position: absolute; left: 0px; top: 0px; width: 100%; height: 100%; }")
+    css.append("")
 
-    destination = worktree / "assets" / "ui" / "styles" / "controls.rcss"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text("\n".join(lines), encoding="utf-8")
+    rml = ['<div id="controls-layer">']
+    for index in range(21):
+        visible = "" if index == 20 else " hidden"
+        rml.append(
+            f'    <img id="volume_frame_{index:02d}" class="volume-frame-img frame-img{visible}" '
+            f'src="controls/frames/volume_frame_{index:02d}.tga" />')
+    rml.append('    <img id="volume_focus_ring" class="volume-frame-img frame-img hidden" '
+               'src="controls/frames/volume_focus_ring.tga" />')
+    tuner_states = ["idle", "previous_focus", "previous_pressed", "next_focus", "next_pressed"]
+    for state in tuner_states:
+        visible = "" if state == "idle" else " hidden"
+        rml.append(
+            f'    <img id="tuner_{state}" class="tuner-frame-img frame-img{visible}" '
+            f'src="controls/frames/tuner_{state}.tga" />')
+    for control in manifest["buttons"]["controls"]:
+        element = f"btn-{control.replace('_', '-')}"
+        for state in manifest["buttons"]["stateRows"]:
+            initial = " selected" if (control == "radio" and state == "selected") else (
+                " hidden" if state != "normal" else "")
+            rml.append(
+                f'    <img id="{element}-{state}" class="btn-img btn-rect-{control.replace("_", "-")} frame-img{initial}" '
+                f'src="controls/frames/btn_{control}_{state}.tga" />')
+    rml.append("</div>")
+    stack = chr(10).join(rml)
+
+    rml_path = worktree / "assets" / "ui" / "main.rml"
+    rml_text = rml_path.read_text(encoding="utf-8")
+    start = rml_text.index('<div id="controls-layer">')
+    end = rml_text.index('</div>', rml_text.index('btn-play-pause')) + len('</div>')
+    rml_text = rml_text[:start] + stack + rml_text[end:]
+    rml_text = rml_text.replace("__PROSPERO_VERSION__", version)
+    rml_path.write_text(rml_text, encoding="utf-8")
+
+    css_path = worktree / "assets" / "ui" / "styles" / "controls.rcss"
+    css_path.write_text(chr(10).join(css), encoding="utf-8")
 
 
-def patch_console_ux(worktree: Path, overlay: Path) -> None:
+def patch_console_ux(worktree: Path, overlay: Path, version: str) -> None:
     src = worktree / "src"
     # radio_app.cpp/.hpp ship complete from the overlay (theme, atlas frames and
     # the physical-button state machine are native there now).
     patch_volume_taper(src)
     patch_rotary_sticks(src)
-    generate_controls_rcss(overlay, worktree)
+    generate_controls_assets(overlay, worktree, version)

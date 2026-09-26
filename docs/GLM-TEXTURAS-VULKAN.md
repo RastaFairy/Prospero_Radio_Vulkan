@@ -21,6 +21,12 @@ Después de ejecutar los tres generadores en el orden indicado:
 
 Los TGA de controles son de 32 bits, alfa de 8 bits, orden BGRA y origen arriba a la izquierda. El atlas de volumen pesa 16,613,394 bytes, por debajo del límite actual de 16 MiB del cargador de archivos completos.
 
+## Por qué los atlas van en varias texturas
+
+No combinar `buttons.tga`, `volume.tga`, `tuner.tga` y `album-art-frame.tga` en un único TGA. Juntos ocupan 24,576,328 bytes (23.44 MiB); el renderer limita las lecturas completas a 16 MiB, así que un atlas RGBA sin pérdida con todos esos píxeles sería rechazado por `LoadTexture`. Aumentar ese límite obligaría al cargador a decodificar de una vez una imagen mayor sin reducir la memoria GPU total, que depende de la misma cantidad de texels.
+
+La organización ya tiene un solo mapa lógico: el manifiesto elegido (`manifest.json` o `manifest-hybrid.json`) contiene botones, volumen, tuner, marco de carátula y pantalla. Los tres TGA de estados son tres sprite sheets, cargados una vez cada uno; todos los frames de un sheet reutilizan esa textura mediante sus UV. El marco de carátula es un recurso opcional aparte. No se crea ni se carga una textura por botón, estado o frame.
+
 ## Espaciado y UV: no recortar el padding
 
 Todos los frames de `buttons.tga`, `volume.tga` y `tuner.tga` tienen **8 px de extrusión por lado**. El generador copia los texels del borde hacia ese padding. Cada rectángulo de `manifest*.json` señala solo el núcleo del frame; por ejemplo, el primer botón empieza en `[8, 8]`, no en `[0, 0]`. La separación entre núcleos vecinos es de 16 px, formada por los 8 px de cada frame.

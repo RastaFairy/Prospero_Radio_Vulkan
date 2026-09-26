@@ -24,7 +24,7 @@
 
             <div id="display">
                 <div id="screen-home">
-                    <span id="home-kicker">NOW PLAYING</span>
+                    <span id="home-kicker">NOW PLAYING  /  __PROSPERO_VERSION__</span>
                     <span id="home-name">Tuning...</span>
                     <span id="home-meta">Turn the TUNING dial to find a station</span>
                     <span id="home-status">READY</span>

@@ -214,8 +214,9 @@ void RadioApp::ApplyButtons()
 {
     static const char *names[] = {"home", "radio", "favorites", "genres",
                                   "search", "settings", "play-pause"};
+    static const char *states[] = {"normal", "focus", "pressed", "selected", "selected_focus"};
     static const Mode selected_mode[] = {
-        Mode::Home,  Mode::List,    Mode::List,   Mode::Genres,
+        Mode::Home,   Mode::List,    Mode::List,     Mode::Genres,
         Mode::Search, Mode::Settings, Mode::Home,
     };
     static const ListKind selected_list[] = {
@@ -230,25 +231,16 @@ void RadioApp::ApplyButtons()
                               (selected_mode[i] != Mode::List || list_kind_ == selected_list[i]) &&
                               !(i == 6 && !PlaybackActive(status.playback_state));
         const bool focused = mode_ == Mode::Home && button_focus_ == i;
-        char id[24];
-        std::snprintf(id, sizeof(id), "btn-%s", names[i]);
-        SetClass(document_, id, "btn-home-selected", false);
-        SetClass(document_, id, "btn-radio-selected", false);
-        SetClass(document_, id, "btn-favorites-selected", false);
-        SetClass(document_, id, "btn-genres-selected", false);
-        SetClass(document_, id, "btn-search-selected", false);
-        SetClass(document_, id, "btn-settings-selected", false);
-        SetClass(document_, id, "btn-play-pause-selected", false);
-        char state[48];
-        if (selected && focused)
-            std::snprintf(state, sizeof(state), "btn-%s-selected_focus", names[i]);
-        else if (selected)
-            std::snprintf(state, sizeof(state), "btn-%s-selected", names[i]);
-        else if (focused)
-            std::snprintf(state, sizeof(state), "btn-%s-focus", names[i]);
-        else
-            std::snprintf(state, sizeof(state), "btn-%s-normal", names[i]);
-        SetClass(document_, id, state, true);
+        const char *state = selected && focused ? "selected_focus"
+                            : selected          ? "selected"
+                            : focused           ? "focus"
+                                                : "normal";
+        for (const char *candidate : states)
+        {
+            char id[56];
+            std::snprintf(id, sizeof(id), "btn-%s-%s", names[i], candidate);
+            SetVisible(document_, id, std::strcmp(candidate, state) == 0);
+        }
     }
 }
 
@@ -822,20 +814,29 @@ void RadioApp::ApplyVolumeFrame()
     const unsigned frame = std::clamp((volume * 2U + 5U) / 10U, 0U, 20U);
     if (frame == volume_frame_)
         return;
-    char previous_name[32];
-    char current_name[32];
-    std::snprintf(previous_name, sizeof(previous_name), "volume-frame-%u", volume_frame_);
-    std::snprintf(current_name, sizeof(current_name), "volume-frame-%u", frame);
-    SetClass(document_, "volume-frame", previous_name, false);
-    SetClass(document_, "volume-frame", current_name, true);
+    char previous_id[32];
+    char current_id[32];
+    std::snprintf(previous_id, sizeof(previous_id), "volume_frame_%02u", volume_frame_);
+    std::snprintf(current_id, sizeof(current_id), "volume_frame_%02u", frame);
+    SetVisible(document_, previous_id, false);
+    SetVisible(document_, current_id, true);
     volume_frame_ = frame;
 }
 
 void RadioApp::ApplyTunerFrame()
 {
-    SetClass(document_, "tuner-frame", "tuner-idle", tuner_state_ == 0U);
-    SetClass(document_, "tuner-frame", "tuner-prev", tuner_state_ == 1U);
-    SetClass(document_, "tuner-frame", "tuner-next", tuner_state_ == 2U);
+    static const char *states[] = {"idle", "previous_focus", "previous_pressed",
+                                   "next_focus", "next_pressed"};
+    for (const char *state : states)
+    {
+        char id[40];
+        std::snprintf(id, sizeof(id), "tuner_%s", state);
+        const bool active =
+            (tuner_state_ == 0U && std::strcmp(state, "idle") == 0) ||
+            (tuner_state_ == 1U && std::strcmp(state, "previous_focus") == 0) ||
+            (tuner_state_ == 2U && std::strcmp(state, "next_focus") == 0);
+        SetVisible(document_, id, active);
+    }
 }
 
 /* --- input ------------------------------------------------------------ */
