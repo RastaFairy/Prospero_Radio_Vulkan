@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 
@@ -500,7 +501,7 @@ def split_atlas(overlay: Path, worktree: Path) -> dict:
         header[14] = height & 0xFF
         header[15] = (height >> 8) & 0xFF
         header[16] = 32
-        header[17] = 0x20
+        header[17] = 0x28
         path.write_bytes(bytes(header) + bytes(pixels))
 
     frames = {}
@@ -542,6 +543,7 @@ def split_atlas(overlay: Path, worktree: Path) -> dict:
 
 
 def generate_controls_assets(overlay: Path, worktree: Path, version: str) -> None:
+    NL = chr(10)
     frames = split_atlas(overlay, worktree)
     manifest = json.loads(
         (overlay / "assets/ui/controls/manifest-hybrid.json").read_text(encoding="utf-8")
@@ -590,9 +592,21 @@ def generate_controls_assets(overlay: Path, worktree: Path, version: str) -> Non
 
     rml_path = worktree / "assets" / "ui" / "main.rml"
     rml_text = rml_path.read_text(encoding="utf-8")
+    # Replace the WHOLE controls-layer container: cutting at the first closing
+    # tag after the last child leaves the container's own closer behind and
+    # unbalances the document (app-shell closed early, parse errors).
     start = rml_text.index('<div id="controls-layer">')
-    end = rml_text.index('</div>', rml_text.index('btn-play-pause')) + len('</div>')
-    rml_text = rml_text[:start] + stack + rml_text[end:]
+    end = rml_text.index('<div id="display">', start)
+    rml_text = rml_text[:start] + stack + NL + NL + rml_text[end:]
+
+    # Validate: every <div> must be closed before </body>, no orphan closers.
+    depth = 0
+    for token in re.finditer(r"<div\b|</div>", rml_text):
+        depth += 1 if token.group(0).startswith("<div") else -1
+        if depth < 0:
+            raise RuntimeError("generated main.rml closes more divs than it opens")
+    if depth != 0:
+        raise RuntimeError(f"generated main.rml leaves {depth} div(s) open")
     rml_text = rml_text.replace("__PROSPERO_VERSION__", version)
     rml_path.write_text(rml_text, encoding="utf-8")
 
@@ -600,10 +614,61 @@ def generate_controls_assets(overlay: Path, worktree: Path, version: str) -> Non
     css_path.write_text(chr(10).join(css), encoding="utf-8")
 
 
+
+def patch_font_nearest_size(src: Path) -> None:
+    """The bitmap engine registers faces only at the shipped sizes (20..48 for
+    Montserrat); CSS sizes like 14/15/17/18 px found no face and flooded the
+    runtime log with per-frame warnings while rendering no text. Match the
+    nearest registered size of the same family/style/weight instead."""
+    engine = src / "bitmap_font_engine.cpp"
+    text = engine.read_text(encoding="utf-8")
+    old = """    const Rml::String normalized_family = Rml::StringUtilities::ToLower(family);
+    for (const auto &font : fonts)
+    {
+        if (font->Family() == normalized_family && font->Style() == style &&
+            font->Weight() == weight && font->Metrics().size == size)
+            return font.get();
+    }
+    return nullptr;
+}"""
+    new = """    const Rml::String normalized_family = Rml::StringUtilities::ToLower(family);
+    for (const auto &font : fonts)
+    {
+        if (font->Family() == normalized_family && font->Style() == style &&
+            font->Weight() == weight && font->Metrics().size == size)
+            return font.get();
+    }
+    /* Nearest registered size: the interface uses sizes (14, 15, 17, 18 px)
+     * that have no exact bitmap face; render with the closest one instead of
+     * dropping the text. */
+    BitmapFontFace *nearest = nullptr;
+    int best_distance = 0;
+    for (const auto &font : fonts)
+    {
+        if (font->Family() == normalized_family && font->Style() == style &&
+            font->Weight() == weight)
+        {
+            const int distance = font->Metrics().size - size;
+            const int magnitude = distance < 0 ? -distance : distance;
+            if (nearest == nullptr || magnitude < best_distance)
+            {
+                nearest = font.get();
+                best_distance = magnitude;
+            }
+        }
+    }
+    return nearest;
+}"""
+    count = text.count(old)
+    if count != 1:
+        raise RuntimeError(f"Expected exactly one FindBitmapFont body, got {count}")
+    engine.write_text(text.replace(old, new, 1), encoding="utf-8")
+
 def patch_console_ux(worktree: Path, overlay: Path, version: str) -> None:
     src = worktree / "src"
     # radio_app.cpp/.hpp ship complete from the overlay (theme, atlas frames and
     # the physical-button state machine are native there now).
     patch_volume_taper(src)
     patch_rotary_sticks(src)
+    patch_font_nearest_size(src)
     generate_controls_assets(overlay, worktree, version)

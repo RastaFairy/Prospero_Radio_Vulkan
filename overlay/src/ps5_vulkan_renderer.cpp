@@ -2452,9 +2452,17 @@ bool Ps5VulkanRenderInterface::ReadTextureFile(const Rml::String &source,
                              static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height));
         return alpha_only;
     }
-    if (bytes.size() < 18 || bytes[0] != 0 || bytes[1] != 0 || bytes[2] != 2 ||
-        (bytes[16] != 24 && bytes[16] != 32) || (bytes[17] & 0x0f) != 8)
+    if (bytes.size() < 18 || bytes[0] != 0 || bytes[1] != 0 || bytes[2] != 2)
         return false;
+    /* Accept the descriptor combinations the real assets use: 32-bit frames
+     * with 8 alpha bits (0x28), 32-bit sources without declared alpha, and
+     * 24-bit opaque themes (descriptor 0x00). */
+    const unsigned alpha_bits = bytes[17] & 0x0f;
+    if ((bytes[16] != 24 && bytes[16] != 32) ||
+        (bytes[16] == 32 && alpha_bits != 8 && alpha_bits != 0) ||
+        (bytes[16] == 24 && alpha_bits != 0))
+        return false;
+    const bool has_alpha = bytes[16] == 32 && alpha_bits == 8;
     if (!ReadTextTextureHeader(bytes, width, height))
         return false;
     const bool top_down = (bytes[17] & 0x30) == 0x20;
@@ -2481,7 +2489,7 @@ bool Ps5VulkanRenderInterface::ReadTextureFile(const Rml::String &source,
             destination_row[column * 4 + 0] = source_row[column * source_stride + 0];
             destination_row[column * 4 + 1] = source_row[column * source_stride + 1];
             destination_row[column * 4 + 2] = source_row[column * source_stride + 2];
-            if (source_stride == 4)
+            if (has_alpha && source_stride == 4)
                 destination_row[column * 4 + 3] = source_row[column * 4 + 3];
         }
     }

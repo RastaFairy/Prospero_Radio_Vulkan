@@ -76,9 +76,12 @@ const bool g_runtime_log_ready = []() {
     std::FILE *log = std::freopen("/download0/prospero-radio.log", "a", stderr);
     if (log == nullptr)
         return false;
+    /* ftell right after an append-open is unreliable on the console libc;
+     * seek to the end explicitly before deciding to rotate. */
+    std::fseek(log, 0, SEEK_END);
     if (std::ftell(log) > 2u * 1024u * 1024u)
         log = std::freopen("/download0/prospero-radio.log", "w", stderr);
-    std::fprintf(stderr, "[PS5-RT] runtime log ready (app_cpp_runtime fork 01.000.017)\n");
+    std::fprintf(stderr, "[PS5-RT] runtime log ready (app_cpp_runtime fork __RUNTIME_VERSION__)\n");
     return log != nullptr;
 }();
 

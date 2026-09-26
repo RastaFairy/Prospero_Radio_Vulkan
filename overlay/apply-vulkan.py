@@ -11,7 +11,7 @@ from pathlib import Path
 from console_ux_patch import patch_console_ux
 
 UPSTREAM_SHA = "33898dd35375c1ae8370da137cfb6941d91c7684"
-VERSION = "01.000.021"
+VERSION = "01.000.022"
 
 # Fork of the boilerplate allocation runtime (overlay/src/app_cpp_runtime.cpp).
 # 01.000.016 redirected title stderr into /download0/prospero-radio.log and gave
@@ -29,6 +29,12 @@ def patch_cpp_runtime(worktree: Path) -> None:
     if not target.exists():
         raise RuntimeError(f"missing upstream runtime source: {target}")
     shutil.copy2(source, target)
+    # Keep the runtime log banner in lockstep with the package version so the
+    # telemetry identifies the installed binary.
+    text = target.read_text(encoding="utf-8")
+    if "__RUNTIME_VERSION__" not in text:
+        raise RuntimeError("runtime banner token missing from app_cpp_runtime.cpp")
+    target.write_text(text.replace("__RUNTIME_VERSION__", VERSION), encoding="utf-8")
 
 
 def run(*args: str, cwd: Path) -> str:

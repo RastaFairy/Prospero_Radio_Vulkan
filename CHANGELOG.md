@@ -1,6 +1,6 @@
 # Registro de cambios — ProsperoRadio Vulkan Edition
 
-> **Versión actual del título: 01.000.019** · compilada y **ejecutable en consola PS5**.
+> **Versión actual del título: 01.000.022** · compilada y **ejecutable en consola PS5**.
 >
 > No confundir: *2.2.1* es la versión del paquete de interfaz original sobre el que se
 > construye este fork; *01.000.0XX* es la `contentVersion` que ve la consola en

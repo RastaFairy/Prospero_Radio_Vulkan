@@ -1022,12 +1022,12 @@ void RadioApp::Poll()
     {
         RebuildFacets();
         genre_total_ = static_cast<unsigned>(genre_facets_.size());
+        /* Seed the service query in every mode: HOME reads the tuned station
+         * through the same catalog view, and a late sync must not leave it
+         * empty ("No stations"). */
+        BuildList();
         RefreshGenres();
-        if (mode_ == Mode::List)
-        {
-            BuildList();
-            RefreshList();
-        }
+        RefreshList();
         RefreshHome();
     }
     if (*pending_play_uuid_ && status.playback_state == RADIO_PLAYBACK_STOPPED)
