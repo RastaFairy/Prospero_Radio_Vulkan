@@ -6,7 +6,7 @@
 
 **Una radio de internet para PS5 con cara de radio de verdad — renderizada con Vulkan.**
 
-![version](https://img.shields.io/badge/versi%C3%B3n-01.000.026-blue)
+![version](https://img.shields.io/badge/versi%C3%B3n-01.000.027-blue)
 ![plataforma](https://img.shields.io/badge/plataforma-PS5-00adef)
 ![estado](https://img.shields.io/badge/estado-funcionando%20en%20consola-brightgreen)
 ![licencia](https://img.shields.io/badge/licencia-GPL--3.0-orange)
