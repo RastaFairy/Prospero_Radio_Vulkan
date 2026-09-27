@@ -1,65 +1,47 @@
 // ProsperoRadio - Native PlayStation 5 radio application.
 // Copyright (C) 2026 BlackBearReloaded
 // SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Physical-radio frontend (01.000.019). The cabinet artwork carries seven
+// printed buttons and two dials, so the software behaves like the hardware it
+// imitates: the D-pad is the finger that moves across the buttons, Cross
+// presses them, the right dial tunes and the left dial is volume. The smoked
+// glass shows exactly one surface: now playing, a station list, genres,
+// search or settings.
 
 #include "radio_app.hpp"
-
 #include "radio_ime.hpp"
-#include "radio_text.hpp"
 
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
-#include <RmlUi/Core/StringUtilities.h>
-
-#include <SDL2/SDL.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstdlib>
 #include <cstring>
+
+extern "C" uint64_t SDL_GetTicks64(void);
+extern "C" uint64_t SDL_GetTicks(void);
 
 namespace
 {
 
-constexpr unsigned kFocusDiscover = 4;
-constexpr unsigned kFocusPlay = 7;
-constexpr unsigned kFocusCredits = 8;
+constexpr unsigned kButtonCount = 7;
+constexpr unsigned kListRows = 7;
+constexpr unsigned kInvalidStation = ~0U;
 
-Rml::Element *Find(Rml::ElementDocument *document, const char *id)
+void SetText(Rml::ElementDocument *document, const char *id, const char *value)
 {
-    return document ? document->GetElementById(id) : nullptr;
-}
-
-void SetText(Rml::ElementDocument *document, const char *id, const char *text)
-{
-    if (Rml::Element *element = Find(document, id))
-    {
-        const std::string visual = RadioVisualText(text);
-        const Rml::String encoded = Rml::StringUtilities::EncodeRml(visual);
-        if (element->GetInnerRML() != encoded)
-            element->SetInnerRML(encoded);
-    }
-}
-
-void SetMultilineText(Rml::ElementDocument *document, const char *id, const char *text)
-{
-    const std::string visual = RadioVisualText(text);
-    Rml::String encoded = Rml::StringUtilities::EncodeRml(visual);
-    for (std::size_t at = 0; (at = encoded.find('\n', at)) != Rml::String::npos;)
-    {
-        encoded.replace(at, 1, "<br/>");
-        at += 5;
-    }
-    if (Rml::Element *element = Find(document, id))
-    {
-        if (element->GetInnerRML() != encoded)
-            element->SetInnerRML(encoded);
-    }
+    if (Rml::Element *element = document->GetElementById(id))
+        element->SetInnerRML(value ? value : "");
 }
 
 void SetClass(Rml::ElementDocument *document, const char *id, const char *class_name, bool enabled)
 {
-    if (Rml::Element *element = Find(document, id))
+    if (Rml::Element *element = document->GetElementById(id))
         element->SetClass(class_name, enabled);
 }
 
@@ -68,18 +50,12 @@ void SetVisible(Rml::ElementDocument *document, const char *id, bool visible)
     SetClass(document, id, "hidden", !visible);
 }
 
-void SetProperty(Rml::ElementDocument *document, const char *id, const char *name,
-                 const char *value)
-{
-    if (Rml::Element *element = Find(document, id))
-        element->SetProperty(name, value);
-}
-
 void SetPixelProperty(Rml::ElementDocument *document, const char *id, const char *name, int value)
 {
     char text[24];
     std::snprintf(text, sizeof(text), "%dpx", value);
-    SetProperty(document, id, name, text);
+    if (Rml::Element *element = document->GetElementById(id))
+        element->SetProperty(name, text);
 }
 
 void FirstValue(const char *values, char *output, std::size_t capacity)
@@ -122,16 +98,6 @@ bool PlaybackActive(radio_playback_state_t state)
            state == RADIO_PLAYBACK_PLAYING || state == RADIO_PLAYBACK_STOPPING;
 }
 
-const char *StationColor(const char *uuid)
-{
-    static const char *palette[] = {"#2c6d87", "#b25535", "#3d7e68", "#6a4b91",
-                                    "#8a6539", "#35628a", "#864d65", "#497556"};
-    unsigned hash = 0;
-    for (; *uuid; ++uuid)
-        hash = hash * 33U + static_cast<unsigned char>(*uuid);
-    return palette[hash % (sizeof(palette) / sizeof(palette[0]))];
-}
-
 void CopyString(char *destination, std::size_t capacity, const char *source)
 {
     if (!capacity)
@@ -160,13 +126,33 @@ bool RadioApp::Initialize(Rml::ElementDocument *document)
     document_ = document;
     if (!document_)
         return false;
-    for (unsigned &station : card_stations_)
-        station = InvalidStation;
     radio_service_init();
     service_started_ = true;
     RebuildFacets();
-    RefreshAll();
-    UpdateFocus();
+    genre_total_ = static_cast<unsigned>(genre_facets_.size());
+    ApplyVolumeFrame();
+    ApplyTunerFrame();
+    LoadPresets();
+    {
+        std::FILE *f = std::fopen("/download0/radio-eq.txt", "rb");
+        if (f)
+        {
+            for (int b = 0; b < 5; ++b)
+            {
+                int gain = 0;
+                if (std::fscanf(f, "%d", &gain) != 1)
+                    break;
+                radio_service_eq_set_gain(b, gain);
+            }
+            std::fclose(f);
+        }
+    }
+    ApplyButtons();
+    BuildList();
+    RefreshHome();
+    RefreshList();
+    RefreshGenres();
+    RefreshSettings();
     return true;
 }
 
@@ -197,594 +183,493 @@ void RadioApp::RebuildFacets()
                 facets.push_back(facet);
         }
     };
-    load(RADIO_FACET_COUNTRY, country_facets_);
     load(RADIO_FACET_GENRE, genre_facets_);
-    load(RADIO_FACET_LANGUAGE, language_facets_);
 
-    const bool build_countries = country_facets_.empty();
-    const bool build_genres = genre_facets_.empty();
-    const bool build_languages = language_facets_.empty();
-    if (build_countries || build_genres || build_languages)
+    if (!genre_facets_.empty())
+        return;
+
+    auto add = [](std::vector<radio_facet_t> &facets, const char *value)
     {
-        auto add = [](std::vector<radio_facet_t> &facets, const char *value, const char *label)
+        if (!*value)
+            return;
+        for (radio_facet_t &facet : facets)
         {
-            if (!*value)
-                return;
-            for (radio_facet_t &facet : facets)
+            if (std::strcmp(facet.value, value) == 0)
             {
-                if (std::strcmp(facet.value, value) == 0)
-                {
-                    ++facet.station_count;
-                    return;
-                }
-            }
-            if (facets.size() >= RADIO_MAX_FACETS)
+                ++facet.station_count;
                 return;
-            radio_facet_t facet{};
-            CopyString(facet.value, sizeof(facet.value), value);
-            CopyString(facet.label, sizeof(facet.label), label);
-            facet.station_count = 1;
-            facets.push_back(facet);
-        };
-        radio_service_status_t status{};
-        radio_service_get_status(&status);
-        for (unsigned i = 0; i < status.station_count; ++i)
-        {
-            radio_station_t station{};
-            if (!radio_service_get_station(i, &station))
-                continue;
-            if (build_countries)
-                add(country_facets_, station.country_code,
-                    *station.country ? station.country : station.country_code);
-            char value[64];
-            FirstValue(station.tags, value, sizeof(value));
-            if (build_genres)
-                add(genre_facets_, value, value);
-            FirstValue(station.language, value, sizeof(value));
-            if (build_languages)
-                add(language_facets_, value, value);
+            }
         }
-        auto sort = [](std::vector<radio_facet_t> &facets)
-        {
-            std::sort(facets.begin(), facets.end(),
-                      [](const radio_facet_t &left, const radio_facet_t &right)
-                      { return left.station_count > right.station_count; });
-        };
-        sort(country_facets_);
-        sort(genre_facets_);
-        sort(language_facets_);
-    }
-
-    auto retained = [](const std::vector<radio_facet_t> &facets, const char *selected)
-    {
-        if (!*selected)
-            return true;
-        for (const radio_facet_t &facet : facets)
-            if (std::strcmp(facet.value, selected) == 0)
-                return true;
-        return false;
+        if (facets.size() >= RADIO_MAX_FACETS)
+            return;
+        radio_facet_t facet{};
+        CopyString(facet.value, sizeof(facet.value), value);
+        CopyString(facet.label, sizeof(facet.label), value);
+        facet.station_count = 1;
+        facets.push_back(facet);
     };
-    if (!retained(country_facets_, filter_country_))
-        filter_country_[0] = '\0';
-    if (!retained(genre_facets_, filter_genre_))
-        filter_genre_[0] = '\0';
-    if (!retained(language_facets_, filter_language_))
-        filter_language_[0] = '\0';
-}
-
-bool RadioApp::StationVisible(const radio_station_t &station) const
-{
-    if (view_ == View::Popular || view_ == View::Trending || view_ == View::Voted)
-        return true;
-    if (view_ == View::Favorites)
-        return radio_service_is_favorite(station.uuid);
-
-    if (*filter_country_ && std::strcmp(station.country_code, filter_country_) != 0)
-        return false;
-    if (*filter_genre_ && !ContainsCi(station.tags, filter_genre_))
-        return false;
-    if (*filter_language_ && !ContainsCi(station.language, filter_language_))
-        return false;
-    if (filter_bitrate_ && station.bitrate < filter_bitrate_)
-        return false;
-    if (!*search_query_)
-        return true;
-    return ContainsCi(station.name, search_query_) || ContainsCi(station.tags, search_query_) ||
-           ContainsCi(station.country, search_query_) || ContainsCi(station.state, search_query_) ||
-           ContainsCi(station.language, search_query_);
-}
-
-void RadioApp::BuildVisibleList()
-{
-    radio_catalog_query_t query{};
-    const radio_catalog_query_t *query_ptr = nullptr;
-    if (view_ == View::Discover)
-    {
-        CopyString(query.name, sizeof(query.name), search_query_);
-        CopyString(query.country_code, sizeof(query.country_code), filter_country_);
-        CopyString(query.tag, sizeof(query.tag), filter_genre_);
-        CopyString(query.language, sizeof(query.language), filter_language_);
-        query.bitrate_min = filter_bitrate_;
-        query_ptr = &query;
-    }
-    radio_catalog_order_t order = RADIO_CATALOG_ORDER_POPULAR;
-    if (view_ == View::Trending)
-        order = RADIO_CATALOG_ORDER_TRENDING;
-    else if (view_ == View::Voted)
-        order = RADIO_CATALOG_ORDER_VOTED;
-    const bool favorites_only = view_ == View::Favorites;
-    unsigned total = 0;
-    bool loaded =
-        radio_service_query_page(query_ptr, order, favorites_only, page_start_, CardCount, &total);
-    if (loaded && total && page_start_ >= total)
-    {
-        page_start_ = ((total - 1U) / CardCount) * CardCount;
-        loaded = radio_service_query_page(query_ptr, order, favorites_only, page_start_, CardCount,
-                                          &total);
-    }
-    visible_indices_.clear();
-    if (loaded)
-    {
-        radio_service_status_t status{};
-        radio_service_get_status(&status);
-        visible_indices_.reserve(status.station_count);
-        for (unsigned i = 0; i < status.station_count; ++i)
-            visible_indices_.push_back(i);
-        visible_count_ = total;
-    }
-    else
-        visible_count_ = 0;
-    if (selected_slot_ >= CardCount)
-        selected_slot_ = 0;
-}
-
-void RadioApp::RefreshAll()
-{
-    BuildVisibleList();
-    RefreshCards();
-    RefreshTabs();
-    RefreshHeading();
-    RefreshDiscover();
-    RefreshDetail();
     radio_service_status_t status{};
     radio_service_get_status(&status);
-    RefreshPlayback(status);
-    RefreshConnection(status);
-    UpdateSearch();
-}
-
-void RadioApp::RefreshTabs()
-{
-    for (unsigned i = 0; i < static_cast<unsigned>(View::Count); ++i)
-    {
-        char id[16];
-        std::snprintf(id, sizeof(id), "tab-%u", i);
-        SetClass(document_, id, "active", i == static_cast<unsigned>(view_));
-    }
-}
-
-void RadioApp::RefreshHeading()
-{
-    static const char *titles[] = {"Popular stations", "Trending now", "Top rated",
-                                   "Your favorites", "Discover"};
-    static const char *subtitles[] = {
-        "Most played on Radio Browser in the last 24 hours",
-        "Stations gaining the most listeners across the last two days",
-        "Community favorites ranked by cumulative Radio Browser votes",
-        "Saved locally on this console",
-        "Choose Country, Genre, or Language below - Triangle opens search"};
-    const unsigned view = static_cast<unsigned>(view_);
-    SetText(document_, "heading", titles[view]);
-    SetText(document_, "subtitle", subtitles[view]);
-
-    const unsigned page_count = visible_count_ ? (visible_count_ + CardCount - 1) / CardCount : 0;
-    const unsigned page_number = visible_count_ ? page_start_ / CardCount + 1 : 0;
-    char text[112];
-    if (!visible_count_)
-        CopyString(text, sizeof(text), "No matching stations");
-    else
-    {
-        const unsigned last =
-            page_start_ + CardCount < visible_count_ ? page_start_ + CardCount : visible_count_;
-        std::snprintf(text, sizeof(text), "Page %u of %u   /   %u-%u of %u stations", page_number,
-                      page_count, page_start_ + 1, last, visible_count_);
-    }
-    SetText(document_, "page-label", text);
-    const bool has_previous_page = page_start_ >= CardCount;
-    const bool has_next_page = page_start_ + CardCount < visible_count_;
-    SetText(document_, "page-prev-label", has_previous_page ? "Previous page" : "");
-    SetText(document_, "page-next-label", has_next_page ? "Next page" : "");
-    SetClass(document_, "page-prev", "available", has_previous_page);
-    SetClass(document_, "page-next", "available", has_next_page);
-
-    constexpr int track_width = 420;
-    int thumb_width = page_count > 1 ? track_width / static_cast<int>(page_count) : track_width;
-    if (thumb_width < 34)
-        thumb_width = 34;
-    const int thumb_left = page_count > 1
-                               ? static_cast<int>(page_number - 1) * (track_width - thumb_width) /
-                                     static_cast<int>(page_count - 1)
-                               : 0;
-    SetPixelProperty(document_, "page-thumb", "width", thumb_width);
-    SetPixelProperty(document_, "page-thumb", "left", thumb_left);
-}
-
-void RadioApp::RefreshDiscover()
-{
-    SetVisible(document_, "discover-panel", view_ == View::Discover);
-    const radio_facet_t *country = FindFacet(country_facets_, filter_country_);
-    const radio_facet_t *genre = FindFacet(genre_facets_, filter_genre_);
-    const radio_facet_t *language = FindFacet(language_facets_, filter_language_);
-    const char *values[] = {country ? country->label : "All countries",
-                            genre ? genre->label : "All genres",
-                            language ? language->label : "All languages"};
-    const char *names[] = {"COUNTRY", "GENRE", "LANGUAGE"};
-    const unsigned choices[] = {static_cast<unsigned>(country_facets_.size()),
-                                static_cast<unsigned>(genre_facets_.size()),
-                                static_cast<unsigned>(language_facets_.size())};
-    const unsigned matches[] = {country ? country->station_count : choices[0],
-                                genre ? genre->station_count : choices[1],
-                                language ? language->station_count : choices[2]};
-    for (unsigned i = 0; i < 3; ++i)
-    {
-        const bool selected = (i == 0 && *filter_country_) || (i == 1 && *filter_genre_) ||
-                              (i == 2 && *filter_language_);
-        char text[120];
-        std::snprintf(text, sizeof(text), "%s  /  %s  (%u %s)", names[i], values[i],
-                      selected ? matches[i] : choices[i], selected ? "stations" : "choices");
-        char id[32];
-        std::snprintf(id, sizeof(id), "discover-label-%u", i);
-        SetText(document_, id, text);
-    }
-}
-
-void RadioApp::RefreshCard(unsigned slot)
-{
-    char id[32];
-    std::snprintf(id, sizeof(id), "card-%u", slot);
-    if (page_start_ + slot >= visible_count_ || slot >= visible_indices_.size())
-    {
-        card_stations_[slot] = InvalidStation;
-        SetVisible(document_, id, false);
-        return;
-    }
-
-    const unsigned index = visible_indices_[slot];
-    radio_station_t station{};
-    if (!radio_service_get_station(index, &station))
-    {
-        card_stations_[slot] = InvalidStation;
-        SetVisible(document_, id, false);
-        return;
-    }
-    card_stations_[slot] = index;
-    SetVisible(document_, id, true);
-
-    std::snprintf(id, sizeof(id), "art-%u", slot);
-    SetProperty(document_, id, "background-color", StationColor(station.uuid));
-    std::snprintf(id, sizeof(id), "badge-%u", slot);
-    SetText(document_, id, *station.country_code ? station.country_code : "AAC");
-    std::snprintf(id, sizeof(id), "name-%u", slot);
-    SetText(document_, id, station.name);
-
-    char tag[40];
-    FirstValue(station.tags, tag, sizeof(tag));
-    if (!*tag)
-        CopyString(tag, sizeof(tag), "Music");
-    char text[192];
-    std::snprintf(text, sizeof(text), "%s  |  %s  |  %s %u kbps",
-                  *station.country_code ? station.country_code : "World", tag, station.codec,
-                  station.bitrate);
-    std::snprintf(id, sizeof(id), "meta-%u", slot);
-    SetText(document_, id, text);
-
-    if (view_ == View::Popular)
-        std::snprintf(text, sizeof(text), "#%u  %u plays", page_start_ + slot + 1U,
-                      station.click_count);
-    else if (view_ == View::Trending)
-        std::snprintf(text, sizeof(text), "#%u  %+d", page_start_ + slot + 1U, station.click_trend);
-    else if (view_ == View::Voted)
-        std::snprintf(text, sizeof(text), "#%u  %u votes", page_start_ + slot + 1U, station.votes);
-    else
-        text[0] = '\0';
-    std::snprintf(id, sizeof(id), "rank-%u", slot);
-    SetText(document_, id, text);
-
-    std::snprintf(id, sizeof(id), "favorite-%u", slot);
-    SetClass(document_, id, "saved", radio_service_is_favorite(station.uuid));
-    radio_service_status_t status{};
-    radio_service_get_status(&status);
-    std::snprintf(id, sizeof(id), "live-%u", slot);
-    SetVisible(document_, id,
-               PlaybackActive(status.playback_state) && radio_service_station_is_playing(index));
-}
-
-void RadioApp::RefreshCards()
-{
-    for (unsigned i = 0; i < CardCount; ++i)
-        RefreshCard(i);
-    if (card_stations_[selected_slot_] == InvalidStation)
-        selected_slot_ = 0;
-}
-
-void RadioApp::RefreshDetail()
-{
-    if (card_stations_[selected_slot_] == InvalidStation)
-    {
-        SetText(document_, "detail-badge", "...");
-        SetText(document_, "detail-name", visible_count_ ? "Loading" : "No stations found");
-        SetText(document_, "detail-meta", "Open Discover to change filters");
-        SetText(document_, "detail-codec", "Radio Browser catalog");
-        SetText(document_, "detail-metric", "");
-    }
-    else
+    for (unsigned i = 0; i < status.station_count; ++i)
     {
         radio_station_t station{};
-        if (radio_service_get_station(card_stations_[selected_slot_], &station))
-        {
-            SetProperty(document_, "detail-art", "background-color", StationColor(station.uuid));
-            SetText(document_, "detail-badge",
-                    *station.country_code ? station.country_code : "AAC");
-            SetText(document_, "detail-name", station.name);
-            char line[192];
-            if (*station.state)
-            {
-                std::snprintf(line, sizeof(line), "%s / %s  |  %s", station.country, station.state,
-                              *station.language ? station.language : "Unknown language");
-            }
-            else
-            {
-                std::snprintf(line, sizeof(line), "%s  |  %s",
-                              *station.country ? station.country : "Worldwide",
-                              *station.language ? station.language : "Unknown language");
-            }
-            SetText(document_, "detail-meta", line);
-            char tag[64];
-            FirstValue(station.tags, tag, sizeof(tag));
-            std::snprintf(line, sizeof(line), "%s  |  %s %u kbps", *tag ? tag : "Music",
-                          station.codec, station.bitrate);
-            SetText(document_, "detail-codec", line);
-            std::snprintf(line, sizeof(line), "%u daily plays  |  %u votes", station.click_count,
-                          station.votes);
-            SetText(document_, "detail-metric", line);
-        }
+        if (!radio_service_get_station(i, &station))
+            continue;
+        char value[64];
+        FirstValue(station.tags, value, sizeof(value));
+        add(genre_facets_, value);
     }
-    for (unsigned i = 0; i < CardCount; ++i)
+    std::sort(genre_facets_.begin(), genre_facets_.end(),
+              [](const radio_facet_t &left, const radio_facet_t &right)
+              { return left.station_count > right.station_count; });
+}
+
+/* --- buttons ---------------------------------------------------------- */
+
+void RadioApp::ShowScreen()
+{
+    /* Exactly one glass surface per mode: no stacked panels, ever. */
+    SetVisible(document_, "screen-home", mode_ == Mode::Home);
+    SetVisible(document_, "screen-list", mode_ == Mode::List);
+    SetVisible(document_, "screen-genres", mode_ == Mode::Genres);
+    SetVisible(document_, "settings-panel", false);
+    SetVisible(document_, "search-panel", false);
+    SetVisible(document_, "screen-aux", mode_ == Mode::Aux);
+    SetVisible(document_, "screen-barrido", mode_ == Mode::Barrido);
+    SetVisible(document_, "screen-eq", mode_ == Mode::Eq);
+}
+
+void RadioApp::ApplyButtons()
+{
+    ShowScreen();
+    static const char *names[] = {"home",   "radio",    "favorites", "genres",
+                                  "search", "settings", "play-pause"};
+    static const char *states[] = {"normal", "focus", "pressed", "selected", "selected_focus"};
+    static const Mode selected_mode[] = {
+        Mode::Home, Mode::List, Mode::List, Mode::Aux, Mode::Barrido, Mode::Eq, Mode::Home,
+    };
+    static const ListKind selected_list[] = {
+        ListKind::Radio, ListKind::Radio, ListKind::Favorites, ListKind::Radio,
+        ListKind::Radio, ListKind::Radio, ListKind::Radio,
+    };
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    for (unsigned i = 0; i < kButtonCount; ++i)
     {
-        char id[20];
-        std::snprintf(id, sizeof(id), "card-%u", i);
-        SetClass(document_, id, "selected", i == selected_slot_);
+        const bool selected = i != 0 && mode_ == selected_mode[i] &&
+                              (selected_mode[i] != Mode::List || list_kind_ == selected_list[i]) &&
+                              !(i == 6 && !PlaybackActive(status.playback_state));
+        const bool focused = mode_ == Mode::Home && button_focus_ == i;
+        const char *state = selected && focused ? "selected_focus"
+                            : selected          ? "selected"
+                            : focused           ? "focus"
+                                                : "normal";
+        for (const char *candidate : states)
+        {
+            char id[56];
+            std::snprintf(id, sizeof(id), "btn-%s-%s", names[i], candidate);
+            SetVisible(document_, id, std::strcmp(candidate, state) == 0);
+        }
     }
 }
 
-void RadioApp::RefreshPlayback(const radio_service_status_t &status)
+void RadioApp::PressButton(unsigned index)
 {
-    const char *text = "Ready to play";
+    switch (index)
+    {
+    case 0: // POWER — fade del LCD y salida cruda (sin teardown de libc)
+        if (poweroff_ticks_ < 0)
+        {
+            poweroff_ticks_ = 36;
+            SetClass(document_, "display", "dying", true);
+            SetText(document_, "home-status", "APAGANDO");
+        }
+        return;
+    case 1: // RADIO
+        mode_ = Mode::List;
+        list_kind_ = ListKind::Radio;
+        list_start_ = list_cursor_ = 0;
+        BuildList();
+        RefreshList();
+        ApplyButtons();
+        break;
+    case 2: // FAVORITES
+        mode_ = Mode::List;
+        list_kind_ = ListKind::Favorites;
+        list_start_ = list_cursor_ = 0;
+        BuildList();
+        RefreshList();
+        ApplyButtons();
+        break;
+    case 3: // BARRIDO — reescanea el fichero subido por AUX
+        mode_ = Mode::Barrido;
+        radio_service_aux_start();
+        SetText(document_, "barrido-status",
+                radio_service_aux_stations() >= 0
+                    ? "LISTA CARGADA EN MEMORIA - LISTA PARA REPRODUCIR"
+                    : "SIN LISTAS - ENTRA POR AUX Y ENVIA UNA M3U");
+        ApplyButtons();
+        break;
+    case 4: // AUX — servidor HTTP de listas en el puerto 7000
+        mode_ = Mode::Aux;
+        radio_service_aux_start();
+        RefreshAuxPanel();
+        ApplyButtons();
+        break;
+    case 5: // EQ — superficie visible; DSP de bandas en v027
+        mode_ = Mode::Eq;
+        ApplyButtons();
+        break;
+    case 6: // PLAY / PAUSE
+    {
+        radio_service_status_t status{};
+        radio_service_get_status(&status);
+        if (PlaybackActive(status.playback_state))
+            radio_service_stop();
+        else if (status.station_count)
+            PlayIndex(tuned_index_);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+/* --- dials ------------------------------------------------------------ */
+
+void RadioApp::AdjustVolume(int direction)
+{
+    const int current = static_cast<int>(radio_service_get_volume());
+    const int next = std::clamp(current + direction * 2, 0, 100);
+    if (next != current)
+    {
+        radio_service_set_volume(static_cast<unsigned>(next));
+        ApplyVolumeFrame();
+        RefreshVolumeDisplay();
+    }
+    if (mode_ == Mode::Settings)
+        RefreshSettings(false);
+}
+
+void RadioApp::TuneStation(int direction)
+{
+    preset_active_ = -1;
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    if (status.station_count == 0U)
+        return;
+    if (tuned_index_ >= status.station_count)
+        tuned_index_ = 0;
+    const unsigned next =
+        direction < 0 ? (tuned_index_ == 0U ? status.station_count - 1U : tuned_index_ - 1U)
+                      : (tuned_index_ + 1U == status.station_count ? 0U : tuned_index_ + 1U);
+    tuned_index_ = next;
+    tuner_state_ = direction < 0 ? 1U : 2U;
+    ApplyTunerFrame();
+    if (PlaybackActive(status.playback_state))
+        PlayIndex(tuned_index_);
+    RefreshHome();
+    if (mode_ == Mode::Settings)
+        RefreshSettings(false);
+}
+
+void RadioApp::PlayIndex(unsigned index)
+{
+    radio_station_t station{};
+    if (!radio_service_get_station(index, &station))
+        return;
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    if (PlaybackActive(status.playback_state))
+    {
+        if (radio_service_station_is_playing(index))
+            return;
+        pending_play_uuid_[0] = '\0';
+        CopyString(pending_play_uuid_, sizeof(pending_play_uuid_), station.uuid);
+        radio_service_stop();
+        return;
+    }
+    radio_service_play(index);
+}
+
+/* --- list mode -------------------------------------------------------- */
+
+void RadioApp::BuildList()
+{
+    radio_catalog_query_t query{};
+    radio_catalog_query_t *query_ptr = nullptr;
+    if (*filter_genre_)
+    {
+        CopyString(query.tag, sizeof(query.tag), filter_genre_);
+        query_ptr = &query;
+    }
+    unsigned total = 0;
+    const bool loaded =
+        radio_service_query_page(query_ptr, RADIO_CATALOG_ORDER_POPULAR,
+                                 list_kind_ == ListKind::Favorites, list_start_, kListRows, &total);
+    list_total_ = loaded ? total : 0;
+    if (list_total_ && list_start_ >= list_total_)
+    {
+        list_start_ = (list_total_ - 1U) / kListRows * kListRows;
+        list_cursor_ = 0;
+    }
+    for (unsigned &entry : list_indices_)
+        entry = kInvalidStation;
+    if (!loaded)
+    {
+        list_total_ = 0;
+        return;
+    }
+    for (unsigned row = 0; row < kListRows; ++row)
+    {
+        if (list_start_ + row >= list_total_)
+            break;
+        list_indices_[row] = list_start_ + row;
+    }
+}
+
+void RadioApp::RefreshList()
+{
+    static const char *titles[] = {"RADIO BROWSER", "FAVORITES"};
+    SetText(document_, "list-title", titles[list_kind_ == ListKind::Favorites ? 1 : 0]);
+    char text[96];
+    if (list_total_ == 0U)
+    {
+        SetText(document_, "list-status",
+                list_kind_ == ListKind::Favorites ? "No saved stations yet" : "Catalog loading");
+        for (unsigned row = 0; row < kListRows; ++row)
+        {
+            char id[24];
+            std::snprintf(id, sizeof(id), "list-row-%u", row);
+            SetVisible(document_, id, false);
+        }
+        return;
+    }
+    std::snprintf(text, sizeof(text), "%u / %u STATIONS", list_start_ + list_cursor_ + 1U,
+                  list_total_);
+    SetText(document_, "list-status", text);
+    for (unsigned row = 0; row < kListRows; ++row)
+    {
+        char id[24];
+        std::snprintf(id, sizeof(id), "list-row-%u", row);
+        if (list_start_ + row >= list_total_ || list_indices_[row] == kInvalidStation)
+        {
+            SetVisible(document_, id, false);
+            continue;
+        }
+        SetVisible(document_, id, true);
+        radio_station_t station{};
+        if (!radio_service_get_station(list_indices_[row], &station))
+        {
+            SetVisible(document_, id, false);
+            continue;
+        }
+        std::snprintf(id, sizeof(id), "list-name-%u", row);
+        SetText(document_, id, station.name);
+        SetClass(document_, id, "search-match",
+                 *search_query_ && ContainsCi(station.name, search_query_));
+        std::snprintf(id, sizeof(id), "list-meta-%u", row);
+        char tag[40];
+        FirstValue(station.tags, tag, sizeof(tag));
+        std::snprintf(text, sizeof(text), "%s  |  %s %u kbps",
+                      *station.country_code ? station.country_code : "WW", *tag ? tag : "Music",
+                      station.bitrate);
+        SetText(document_, id, text);
+        std::snprintf(id, sizeof(id), "list-fav-%u", row);
+        SetVisible(document_, id, radio_service_is_favorite(station.uuid));
+        std::snprintf(id, sizeof(id), "list-row-%u", row);
+        SetClass(document_, id, "cursor", list_cursor_ == row);
+    }
+}
+
+void RadioApp::RefreshGenres()
+{
+    char text[96];
+    std::snprintf(text, sizeof(text), "%u GENRES", genre_total_);
+    SetText(document_, "genres-status", text);
+    for (unsigned row = 0; row < kListRows; ++row)
+    {
+        char id[24];
+        std::snprintf(id, sizeof(id), "genre-row-%u", row);
+        const unsigned index = genre_start_ + row;
+        if (index >= genre_total_)
+        {
+            SetVisible(document_, id, false);
+            continue;
+        }
+        SetVisible(document_, id, true);
+        std::snprintf(id, sizeof(id), "genre-name-%u", row);
+        SetText(document_, id, genre_facets_[index].label);
+        std::snprintf(id, sizeof(id), "genre-count-%u", row);
+        std::snprintf(text, sizeof(text), "%u", genre_facets_[index].station_count);
+        SetText(document_, id, text);
+        std::snprintf(id, sizeof(id), "genre-row-%u", row);
+        SetClass(document_, id, "cursor", genre_cursor_ == row);
+    }
+}
+
+/* --- home mode -------------------------------------------------------- */
+
+void RadioApp::RefreshHome()
+{
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    radio_station_t station{};
+    const bool have = radio_service_get_station(tuned_index_, &station);
+    if (have)
+    {
+        SetText(document_, "home-name", station.name);
+        char tag[40];
+        FirstValue(station.tags, tag, sizeof(tag));
+        char text[192];
+        std::snprintf(text, sizeof(text), "%s  |  %s  |  %s %u kbps",
+                      *station.country_code ? station.country_code : "WW",
+                      *station.language ? station.language : "Music", station.codec,
+                      station.bitrate);
+        SetText(document_, "home-meta", text);
+    }
+    else
+    {
+        SetText(document_, "home-name", status.station_count ? "Tuning..." : "No stations");
+        SetText(document_, "home-meta", "Turn the TUNING dial to find a station");
+    }
+}
+
+void RadioApp::RefreshStatus()
+{
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    const char *text = "READY";
+    char line[128];
     bool warning = false;
     bool error = false;
-    char state_text[128];
     switch (status.playback_state)
     {
     case RADIO_PLAYBACK_CONNECTING:
-        text = "Connecting to station";
+        text = "CONNECTING";
         warning = true;
         break;
     case RADIO_PLAYBACK_BUFFERING:
-        if (status.sample_rate != 0U)
-        {
-            std::snprintf(state_text, sizeof(state_text), "Buffering  |  %u Hz  |  %u ch",
-                          status.sample_rate, status.channels);
-            text = state_text;
-        }
-        else
-        {
-            text = "Buffering native audio";
-        }
+        std::snprintf(line, sizeof(line), "BUFFERING  |  %u HZ  |  %u CH", status.sample_rate,
+                      status.channels);
+        text = line;
         warning = true;
         break;
     case RADIO_PLAYBACK_PLAYING:
-        std::snprintf(state_text, sizeof(state_text), "Playing  |  %u Hz  |  %u ch",
-                      status.sample_rate, status.channels);
-        text = state_text;
+        std::snprintf(line, sizeof(line), "PLAYING  |  %u HZ  |  %u CH", status.sample_rate,
+                      status.channels);
+        text = line;
         break;
     case RADIO_PLAYBACK_STOPPING:
-        text = "Stopping stream";
+        text = "STOPPING";
         warning = true;
         break;
     case RADIO_PLAYBACK_ERROR:
-        std::snprintf(state_text, sizeof(state_text), "Playback failed  |  %08x",
+        std::snprintf(line, sizeof(line), "ERROR  |  %08x",
                       static_cast<unsigned>(status.error_code));
-        text = state_text;
+        text = line;
         error = true;
         break;
     default:
         break;
     }
-    SetText(document_, "detail-status", text);
-    SetClass(document_, "detail-status", "warning", warning);
-    SetClass(document_, "detail-status", "error", error);
-    SetClass(document_, "detail-status-dot", "warning", warning);
-    SetClass(document_, "detail-status-dot", "error", error);
-
-    const bool selected_playing = PlaybackActive(status.playback_state) &&
-                                  card_stations_[selected_slot_] != InvalidStation &&
-                                  radio_service_station_is_playing(card_stations_[selected_slot_]);
-    SetClass(document_, "play-icon", "stop", selected_playing);
-    SetClass(document_, "play-button", "playing", selected_playing);
-    SetText(document_, "play-label",
-            selected_playing                        ? "Stop station"
-            : PlaybackActive(status.playback_state) ? "Switch station"
-                                                    : "Play station");
-
-    if (PlaybackActive(status.playback_state))
-    {
-        radio_station_t station{};
-        if (radio_service_get_playing_station(&station))
-        {
-            SetProperty(document_, "now-art", "background-color", StationColor(station.uuid));
-            SetText(document_, "now-badge", *station.country_code ? station.country_code : "AAC");
-            SetText(document_, "now-name", station.name);
-            char tag[40];
-            FirstValue(station.tags, tag, sizeof(tag));
-            if (!*tag)
-                CopyString(tag, sizeof(tag), "Music");
-            char meta[192];
-            std::snprintf(meta, sizeof(meta), "%s  |  %s  |  %s %u kbps",
-                          *station.country_code ? station.country_code : "World", tag,
-                          station.codec, station.bitrate);
-            SetText(document_, "now-meta", meta);
-            SetText(document_, "now-state", text);
-            SetClass(document_, "now-state", "warning", warning);
-            SetClass(document_, "now-state", "error", error);
-        }
-    }
-    else
-    {
-        SetText(document_, "now-badge", "--");
-        SetText(document_, "now-name", "Nothing playing");
-        SetText(document_, "now-meta", "Choose a station and press Cross");
-        SetText(document_, "now-state", "Audio decoders ready");
-        SetClass(document_, "now-state", "warning", false);
-        SetClass(document_, "now-state", "error", false);
-    }
-    SetClass(document_, "now-art", "playing", status.playback_state == RADIO_PLAYBACK_PLAYING);
-    for (unsigned i = 0; i < CardCount; ++i)
-        RefreshCard(i);
-}
-
-void RadioApp::RefreshConnection(const radio_service_status_t &status)
-{
-    const char *text = "Database ready";
-    char progress[72];
-    bool warning = false;
-    bool error = false;
-    if (status.refreshing)
-    {
-        if (status.sync_station_count)
-            std::snprintf(progress, sizeof(progress), "%s - %u found",
-                          status.searching ? "Searching stations" : "Updating database",
-                          status.sync_station_count);
-        else
-            std::snprintf(progress, sizeof(progress), "%s",
-                          status.searching ? "Searching stations" : "Updating database");
-        text = progress;
-        warning = true;
-    }
-    else if (status.catalog_state == RADIO_CATALOG_LOADING)
-    {
-        text = "Loading database";
-        warning = true;
-    }
-    else if (status.catalog_state == RADIO_CATALOG_CACHED)
-    {
-        text = "Local cache ready";
-        warning = true;
-    }
-    else if (status.catalog_state == RADIO_CATALOG_ERROR)
-    {
-        std::snprintf(progress, sizeof(progress), "%s %d",
-                      status.catalog_size ? "Offline cache" : "DB error", status.error_code);
-        text = progress;
-        error = true;
-    }
-    SetText(document_, "connection-label", text);
-    SetClass(document_, "connection-label", "warning", warning);
-    SetClass(document_, "connection-label", "error", error);
-    SetClass(document_, "connection-dot", "warning", warning);
-    SetClass(document_, "connection-dot", "error", error);
-}
-
-void RadioApp::UpdateEqualizer(const radio_service_status_t &status)
-{
-    static const unsigned char wave[16] = {18, 28, 42, 61, 44, 30, 52, 67,
-                                           48, 24, 38, 58, 72, 49, 32, 22};
+    SetText(document_, "home-status", text);
+    SetClass(document_, "home-status", "warning", warning);
+    SetClass(document_, "home-status", "error", error);
     const bool playing = status.playback_state == RADIO_PLAYBACK_PLAYING;
-    const unsigned phase = SDL_GetTicks() / 90U;
-    for (unsigned i = 0; i < 5; ++i)
-    {
-        const int height = playing ? wave[(phase + i * 3U) % 16U] : 14;
-        char id[12];
-        std::snprintf(id, sizeof(id), "eq-%u", i);
-        SetPixelProperty(document_, id, "height", height);
-        SetPixelProperty(document_, id, "top", 91 - height);
-        SetClass(document_, id, "playing", playing);
-    }
+    SetClass(document_, "btn-play-pause", "playing", playing);
 }
 
-void RadioApp::UpdateFocus()
+/* --- settings --------------------------------------------------------- */
+
+void RadioApp::RefreshSettings(bool refresh_favorites)
 {
-    for (unsigned i = 0; i < CardCount; ++i)
+    const unsigned volume = radio_service_get_volume();
+    char text[96];
+    std::snprintf(text, sizeof(text), "%u%%", volume);
+    SetText(document_, "settings-volume-value", text);
+    SetPixelProperty(document_, "settings-volume-fill", "width",
+                     static_cast<int>((328U * volume) / 100U));
+    if (refresh_favorites)
     {
-        char id[20];
-        std::snprintf(id, sizeof(id), "card-%u", i);
-        SetClass(document_, id, "focused", !search_open_ && !credits_open_ && focus_ == i);
+        std::snprintf(text, sizeof(text), "%u saved stations", radio_service_get_favorite_count());
+        SetText(document_, "settings-favorites-count", text);
     }
-    for (unsigned i = 0; i < 3; ++i)
-    {
-        char id[20];
-        std::snprintf(id, sizeof(id), "discover-%u", i);
-        SetClass(document_, id, "focused",
-                 !search_open_ && !credits_open_ && focus_ == kFocusDiscover + i);
-    }
-    SetClass(document_, "play-button", "focused",
-             !search_open_ && !credits_open_ && focus_ == kFocusPlay);
-    SetClass(document_, "credit-button", "focused",
-             !search_open_ && !credits_open_ && focus_ == kFocusCredits);
-    for (unsigned i = 0; i < 4; ++i)
-    {
-        char id[20];
-        std::snprintf(id, sizeof(id), "filter-%u", i);
-        SetClass(document_, id, "focused", search_open_ && search_focus_ == i + 1);
-    }
-    SetClass(document_, "search-query", "focused", search_open_ && search_focus_ == 0);
-    SetClass(document_, "search-reset", "focused", search_open_ && search_focus_ == 5);
-    SetClass(document_, "search-apply", "focused", search_open_ && search_focus_ == 6);
-    SetClass(document_, "credits-close", "focused", credits_open_);
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    SetText(document_, "settings-refresh-state", status.refreshing ? "Updating..." : "Ready");
+    static const char *theme_names[] = {"Walnut", "Silver", "Graphite"};
+    SetText(document_, "settings-theme-value",
+            theme_names[theme_selected_ % (sizeof(theme_names) / sizeof(theme_names[0]))]);
+    SetClass(document_, "settings-theme-row", "focused", settings_focus_ == 0U);
+    SetClass(document_, "settings-favorites", "focused", settings_focus_ == 1U);
+    SetClass(document_, "settings-refresh", "focused", settings_focus_ == 2U);
 }
 
-void RadioApp::UpdateSearch()
+void RadioApp::HandleSettingsKey(radio_input_key_t key)
 {
-    SetText(document_, "search-query-label",
-            *search_edit_ ? search_edit_
-                          : "Press Cross to type a station, genre, language, or country...");
-
-    const radio_facet_t *country = FindFacet(country_facets_, filter_country_);
-    const radio_facet_t *genre = FindFacet(genre_facets_, filter_genre_);
-    const radio_facet_t *language = FindFacet(language_facets_, filter_language_);
-    char text[144];
-    std::snprintf(text, sizeof(text), "COUNTRY  /  %u %s\n<  %s  >",
-                  country ? country->station_count : static_cast<unsigned>(country_facets_.size()),
-                  *filter_country_ ? "stations" : "choices",
-                  country ? country->label : "All countries");
-    SetMultilineText(document_, "filter-label-0", text);
-    std::snprintf(text, sizeof(text), "GENRE  /  %u %s\n<  %s  >",
-                  genre ? genre->station_count : static_cast<unsigned>(genre_facets_.size()),
-                  *filter_genre_ ? "stations" : "choices", genre ? genre->label : "All genres");
-    SetMultilineText(document_, "filter-label-1", text);
-    std::snprintf(
-        text, sizeof(text), "LANGUAGE  /  %u %s\n<  %s  >",
-        language ? language->station_count : static_cast<unsigned>(language_facets_.size()),
-        *filter_language_ ? "stations" : "choices", language ? language->label : "All languages");
-    SetMultilineText(document_, "filter-label-2", text);
-    const char *bitrate = filter_bitrate_ == 0     ? "Any bitrate"
-                          : filter_bitrate_ == 64  ? "64+ kbps"
-                          : filter_bitrate_ == 128 ? "128+ kbps"
-                          : filter_bitrate_ == 192 ? "192+ kbps"
-                                                   : "256+ kbps";
-    std::snprintf(text, sizeof(text), "QUALITY  /  5 choices\n<  %s  >", bitrate);
-    SetMultilineText(document_, "filter-label-3", text);
+    if (key == RADIO_INPUT_CIRCLE || key == RADIO_INPUT_TRIANGLE)
+    {
+        theme_selected_ = theme_index_; // cancel a pending selection
+        mode_ = Mode::Home;
+        settings_open_ = false;
+        ApplyButtons();
+        return;
+    }
+    if (key == RADIO_INPUT_LEFT || key == RADIO_INPUT_RIGHT)
+    {
+        if (settings_focus_ == 0U)
+            SelectTheme(key == RADIO_INPUT_LEFT ? -1 : 1);
+        RefreshSettings();
+        return;
+    }
+    if (key == RADIO_INPUT_UP || key == RADIO_INPUT_DOWN)
+    {
+        const int next = static_cast<int>(settings_focus_) + (key == RADIO_INPUT_DOWN ? 1 : -1);
+        settings_focus_ = static_cast<unsigned>((next + 3) % 3);
+        RefreshSettings();
+        return;
+    }
+    if (key != RADIO_INPUT_CROSS)
+        return;
+    if (settings_focus_ == 0U)
+    {
+        if (theme_selected_ != theme_index_)
+        {
+            theme_index_ = theme_selected_;
+            ApplyTheme();
+            SaveTheme();
+        }
+        RefreshSettings();
+        return;
+    }
+    if (settings_focus_ == 1U)
+    {
+        mode_ = Mode::List;
+        list_kind_ = ListKind::Favorites;
+        list_start_ = list_cursor_ = 0;
+        settings_open_ = false;
+        BuildList();
+        RefreshList();
+        ApplyButtons();
+        return;
+    }
+    radio_service_refresh();
+    RefreshSettings();
 }
 
-void RadioApp::OpenSearch(unsigned filter)
+/* --- search ----------------------------------------------------------- */
+
+void RadioApp::OpenSearch()
 {
-    if (search_open_ || credits_open_)
+    if (search_open_)
         return;
     search_open_ = true;
+    mode_ = Mode::Search;
     CopyString(search_edit_, sizeof(search_edit_), search_query_);
-    search_focus_ = filter < 4 ? filter + 1 : 0;
-    SetVisible(document_, "search-overlay", true);
+    search_focus_ = 0;
     UpdateSearch();
-    UpdateFocus();
+    ApplyButtons();
 }
 
 void RadioApp::CloseSearch(bool apply)
@@ -793,124 +678,34 @@ void RadioApp::CloseSearch(bool apply)
         return;
     radio_ime_cancel();
     search_open_ = false;
-    SetVisible(document_, "search-overlay", false);
+    mode_ = Mode::Home;
     if (apply)
     {
         CopyString(search_query_, sizeof(search_query_), search_edit_);
-        view_ = View::Discover;
-        page_start_ = selected_slot_ = focus_ = 0;
-        RefreshAll();
-        if (*search_query_ || *filter_country_ || *filter_genre_ || *filter_language_ ||
-            filter_bitrate_ != 0U)
-        {
-            radio_catalog_query_t query{};
-            CopyString(query.name, sizeof(query.name), search_query_);
-            CopyString(query.country_code, sizeof(query.country_code), filter_country_);
-            CopyString(query.tag, sizeof(query.tag), filter_genre_);
-            CopyString(query.language, sizeof(query.language), filter_language_);
-            query.bitrate_min = filter_bitrate_;
-            radio_service_search(&query);
-        }
+        mode_ = Mode::List;
+        list_kind_ = ListKind::Radio;
+        list_start_ = list_cursor_ = 0;
+        BuildList();
+        RefreshList();
+        ApplyButtons();
+        radio_catalog_query_t query{};
+        CopyString(query.name, sizeof(query.name), search_query_);
+        radio_service_search(&query);
+        return;
     }
-    UpdateFocus();
-}
-
-void RadioApp::OpenCredits()
-{
-    if (search_open_ || credits_open_)
-        return;
-    credits_open_ = true;
-    SetVisible(document_, "credits-overlay", true);
-    UpdateFocus();
-}
-
-void RadioApp::CloseCredits()
-{
-    if (!credits_open_)
-        return;
-    credits_open_ = false;
-    focus_ = kFocusCredits;
-    SetVisible(document_, "credits-overlay", false);
-    UpdateFocus();
-}
-
-void RadioApp::SetView(int direction)
-{
-    int next = static_cast<int>(view_) + direction;
-    const int count = static_cast<int>(View::Count);
-    if (next < 0)
-        next = count - 1;
-    if (next >= count)
-        next = 0;
-    view_ = static_cast<View>(next);
-    page_start_ = selected_slot_ = focus_ = 0;
-    RefreshAll();
-    UpdateFocus();
-}
-
-void RadioApp::ChangePage(int direction, unsigned focus_slot)
-{
-    if (direction > 0 && page_start_ + CardCount < visible_count_)
-        page_start_ += CardCount;
-    else if (direction < 0 && page_start_ >= CardCount)
-        page_start_ -= CardCount;
-    else
-        return;
-    selected_slot_ = focus_slot;
-    focus_ = focus_slot;
-    BuildVisibleList();
-    RefreshCards();
-    if (card_stations_[selected_slot_] == InvalidStation)
-        selected_slot_ = focus_ = 0;
-    RefreshHeading();
-    RefreshDetail();
-    UpdateFocus();
-}
-
-void RadioApp::ToggleFavorite()
-{
-    if (card_stations_[selected_slot_] == InvalidStation)
-        return;
-    radio_service_toggle_favorite(card_stations_[selected_slot_]);
-    RefreshAll();
-    UpdateFocus();
-}
-
-void RadioApp::TogglePlayback()
-{
-    if (card_stations_[selected_slot_] == InvalidStation)
-        return;
-    radio_service_status_t status{};
-    radio_service_get_status(&status);
-    if (PlaybackActive(status.playback_state))
-    {
-        pending_play_uuid_[0] = '\0';
-        if (!radio_service_station_is_playing(card_stations_[selected_slot_]))
-        {
-            radio_station_t station{};
-            if (radio_service_get_station(card_stations_[selected_slot_], &station))
-                CopyString(pending_play_uuid_, sizeof(pending_play_uuid_), station.uuid);
-        }
-        radio_service_stop();
-    }
-    else
-        radio_service_play(card_stations_[selected_slot_]);
+    RefreshHome();
+    ApplyButtons();
 }
 
 void RadioApp::CycleFilter(unsigned filter, int direction)
 {
-    auto cycle =
-        [direction](char *selected, std::size_t capacity, const std::vector<radio_facet_t> &facets)
+    if (filter == 0)
     {
-        const unsigned count = static_cast<unsigned>(facets.size());
-        if (!count)
-        {
-            selected[0] = '\0';
-            return;
-        }
+        // genre facets double as the search filter list
+        const unsigned count = static_cast<unsigned>(genre_facets_.size());
         int current = -1;
         for (unsigned i = 0; i < count; ++i)
-            if (std::strcmp(selected, facets[i].value) == 0)
+            if (std::strcmp(filter_genre_, genre_facets_[i].value) == 0)
                 current = static_cast<int>(i);
         int next = current + direction;
         if (next < -1)
@@ -918,16 +713,10 @@ void RadioApp::CycleFilter(unsigned filter, int direction)
         if (next >= static_cast<int>(count))
             next = -1;
         if (next < 0)
-            selected[0] = '\0';
+            filter_genre_[0] = '\0';
         else
-            CopyString(selected, capacity, facets[next].value);
-    };
-    if (filter == 0)
-        cycle(filter_country_, sizeof(filter_country_), country_facets_);
-    else if (filter == 1)
-        cycle(filter_genre_, sizeof(filter_genre_), genre_facets_);
-    else if (filter == 2)
-        cycle(filter_language_, sizeof(filter_language_), language_facets_);
+            CopyString(filter_genre_, sizeof(filter_genre_), genre_facets_[next].value);
+    }
     else
     {
         static const unsigned rates[] = {0, 64, 128, 192, 256};
@@ -943,7 +732,23 @@ void RadioApp::CycleFilter(unsigned filter, int direction)
         filter_bitrate_ = rates[current];
     }
     UpdateSearch();
-    RefreshDiscover();
+}
+
+void RadioApp::UpdateSearch()
+{
+    SetText(document_, "search-query-label",
+            *search_edit_ ? search_edit_ : "Press Cross to type a station or genre...");
+    const radio_facet_t *genre = FindFacet(genre_facets_, filter_genre_);
+    char text[144];
+    std::snprintf(text, sizeof(text), "GENRE  /  %s", genre ? genre->label : "All genres");
+    SetText(document_, "filter-label-1", text);
+    const char *bitrate = filter_bitrate_ == 0     ? "Any bitrate"
+                          : filter_bitrate_ == 64  ? "64+ kbps"
+                          : filter_bitrate_ == 128 ? "128+ kbps"
+                          : filter_bitrate_ == 192 ? "192+ kbps"
+                                                   : "256+ kbps";
+    std::snprintf(text, sizeof(text), "QUALITY  /  %s", bitrate);
+    SetText(document_, "filter-label-3", text);
 }
 
 void RadioApp::HandleSearchKey(radio_input_key_t key)
@@ -959,162 +764,33 @@ void RadioApp::HandleSearchKey(radio_input_key_t key)
         return;
     }
     if (key == RADIO_INPUT_UP)
-        search_focus_ = search_focus_ ? search_focus_ - 1 : 6;
+        search_focus_ = search_focus_ ? search_focus_ - 1 : 4;
     else if (key == RADIO_INPUT_DOWN)
-        search_focus_ = search_focus_ < 6 ? search_focus_ + 1 : 0;
-    else if ((key == RADIO_INPUT_LEFT || key == RADIO_INPUT_RIGHT) && search_focus_ >= 5)
-        search_focus_ = search_focus_ == 5 ? 6 : 5;
+        search_focus_ = search_focus_ < 4 ? search_focus_ + 1 : 0;
     else if ((key == RADIO_INPUT_LEFT || key == RADIO_INPUT_RIGHT) && search_focus_ >= 1 &&
-             search_focus_ <= 4)
-    {
+             search_focus_ <= 3)
         CycleFilter(search_focus_ - 1, key == RADIO_INPUT_LEFT ? -1 : 1);
-    }
     else if (key == RADIO_INPUT_CROSS)
     {
         if (search_focus_ == 0)
             radio_ime_request(search_edit_, ImeResult, this);
-        else if (search_focus_ <= 4)
+        else if (search_focus_ <= 3)
             CycleFilter(search_focus_ - 1, 1);
-        else if (search_focus_ == 5)
-        {
-            search_edit_[0] = filter_country_[0] = filter_genre_[0] = filter_language_[0] = '\0';
-            filter_bitrate_ = 0;
-            UpdateSearch();
-        }
         else
+        {
+            CopyString(search_query_, sizeof(search_query_), search_edit_);
             CloseSearch(true);
+        }
     }
-    UpdateFocus();
+    UpdateFocusSearch();
 }
 
-void RadioApp::HandleMainKey(radio_input_key_t key)
+void RadioApp::UpdateFocusSearch()
 {
-    if (key == RADIO_INPUT_TRIANGLE)
-    {
-        OpenSearch(InvalidStation);
-        return;
-    }
-    if (key == RADIO_INPUT_OPTIONS)
-    {
-        radio_service_refresh();
-        return;
-    }
-    if (key == RADIO_INPUT_L1)
-    {
-        SetView(-1);
-        return;
-    }
-    if (key == RADIO_INPUT_R1)
-    {
-        SetView(1);
-        return;
-    }
-    if (key == RADIO_INPUT_SQUARE)
-    {
-        ToggleFavorite();
-        return;
-    }
-    if (key == RADIO_INPUT_CIRCLE)
-    {
-        if (view_ != View::Popular)
-        {
-            view_ = View::Popular;
-            page_start_ = selected_slot_ = focus_ = 0;
-            RefreshAll();
-            UpdateFocus();
-        }
-        return;
-    }
-
-    if (focus_ < CardCount)
-    {
-        const unsigned slot = focus_;
-        if (key == RADIO_INPUT_CROSS)
-            TogglePlayback();
-        else if (key == RADIO_INPUT_LEFT && (slot & 1U))
-            focus_ = selected_slot_ = slot - 1;
-        else if (key == RADIO_INPUT_RIGHT)
-        {
-            if (!(slot & 1U) && card_stations_[slot + 1] != InvalidStation)
-                focus_ = selected_slot_ = slot + 1;
-            else
-                focus_ = kFocusPlay;
-        }
-        else if (key == RADIO_INPUT_UP)
-        {
-            if (slot >= 2)
-                focus_ = selected_slot_ = slot - 2;
-            else
-            {
-                ChangePage(-1, slot + 2);
-                return;
-            }
-        }
-        else if (key == RADIO_INPUT_DOWN)
-        {
-            if (slot < 2 && card_stations_[slot + 2] != InvalidStation)
-                focus_ = selected_slot_ = slot + 2;
-            else if (page_start_ + CardCount < visible_count_)
-            {
-                ChangePage(1, slot & 1U);
-                return;
-            }
-            else if (view_ == View::Discover)
-                focus_ = kFocusDiscover + slot % 3;
-            else
-                focus_ = kFocusPlay;
-        }
-        RefreshDetail();
-    }
-    else if (focus_ >= kFocusDiscover && focus_ < kFocusPlay)
-    {
-        const unsigned filter = focus_ - kFocusDiscover;
-        if (key == RADIO_INPUT_CROSS)
-            OpenSearch(filter);
-        else if (key == RADIO_INPUT_LEFT && filter)
-            --focus_;
-        else if (key == RADIO_INPUT_RIGHT && filter < 2)
-            ++focus_;
-        else if (key == RADIO_INPUT_UP)
-            focus_ = selected_slot_;
-        else if (key == RADIO_INPUT_DOWN)
-            focus_ = kFocusPlay;
-    }
-    else if (focus_ == kFocusPlay)
-    {
-        if (key == RADIO_INPUT_CROSS)
-            TogglePlayback();
-        else if (key == RADIO_INPUT_LEFT || key == RADIO_INPUT_UP)
-            focus_ = selected_slot_;
-        else if (key == RADIO_INPUT_RIGHT || key == RADIO_INPUT_DOWN)
-            focus_ = kFocusCredits;
-    }
-    else if (focus_ == kFocusCredits)
-    {
-        if (key == RADIO_INPUT_CROSS)
-            OpenCredits();
-        else if (key == RADIO_INPUT_UP || key == RADIO_INPUT_LEFT || key == RADIO_INPUT_RIGHT)
-            focus_ = kFocusPlay;
-    }
-    UpdateFocus();
-}
-
-void RadioApp::HandleInput(const radio_input_event_t &event)
-{
-    if (!event.pressed)
-        return;
-    if (credits_open_)
-    {
-        if (event.key == RADIO_INPUT_CROSS || event.key == RADIO_INPUT_CIRCLE)
-            CloseCredits();
-        return;
-    }
-    if (search_open_)
-    {
-        HandleSearchKey(event.key);
-        return;
-    }
-    HandleMainKey(event.key);
+    SetClass(document_, "search-query", "focused", search_focus_ == 0);
+    SetClass(document_, "filter-1", "focused", search_focus_ == 1);
+    SetClass(document_, "filter-3", "focused", search_focus_ == 3);
+    SetClass(document_, "search-apply", "focused", search_focus_ == 4);
 }
 
 void RadioApp::ImeResult(const char *text, void *user_data)
@@ -1126,15 +802,372 @@ void RadioApp::ImeResult(const char *text, void *user_data)
     app->UpdateSearch();
 }
 
+/* --- theme ------------------------------------------------------------ */
+
+void RadioApp::LoadTheme()
+{
+    std::FILE *file = std::fopen("/download0/radio-theme.txt", "rb");
+    if (file == nullptr)
+        return;
+    char buffer[8]{};
+    const std::size_t read = std::fread(buffer, 1, sizeof(buffer) - 1, file);
+    std::fclose(file);
+    if (read == 0)
+        return;
+    if (buffer[0] >= '0' && buffer[0] <= '2')
+        theme_index_ = buffer[0] - '0';
+}
+
+void RadioApp::SaveTheme() const
+{
+    std::FILE *file = std::fopen("/download0/radio-theme.txt", "wb");
+    if (file == nullptr)
+        return;
+    std::fprintf(file, "%d\n", theme_index_);
+    std::fclose(file);
+}
+
+void RadioApp::ApplyTheme()
+{
+    ApplyTheme(theme_index_);
+}
+
+void RadioApp::ApplyTheme(int index)
+{
+    /* Single Walnut/hybrid finish since 026: the silver/graphite backdrops are
+     * gone from the RML, so the theme switch is a no-op kept for the legacy
+     * call sites. The controls layer stays visible. */
+    (void)index;
+    SetClass(document_, "controls-layer", "hidden", false);
+}
+
+void RadioApp::SelectTheme(int direction)
+{
+    /* Left / right only move the picker; Cross applies and persists. */
+    theme_selected_ = (theme_selected_ + 3 + (direction > 0 ? 1 : -1)) % 3;
+}
+
+/* --- atlas frames ----------------------------------------------------- */
+
+void RadioApp::RefreshVolumeDisplay()
+{
+    /* Independent of ApplyVolumeFrame: the figure must track the service even
+     * when the sprite stays on the same 5% step. */
+    char text[32];
+    std::snprintf(text, sizeof(text), "VOL %u%%", radio_service_get_volume());
+    SetText(document_, "volume-level", text);
+}
+
+void RadioApp::ApplyVolumeFrame()
+{
+    const unsigned volume = radio_service_get_volume();
+    const unsigned frame = std::clamp((volume * 2U + 5U) / 10U, 0U, 20U);
+    if (frame == volume_frame_)
+        return;
+    char previous_id[32];
+    char current_id[32];
+    std::snprintf(previous_id, sizeof(previous_id), "volume_frame_%02u", volume_frame_);
+    std::snprintf(current_id, sizeof(current_id), "volume_frame_%02u", frame);
+    SetVisible(document_, previous_id, false);
+    SetVisible(document_, current_id, true);
+    volume_frame_ = frame;
+}
+
+void RadioApp::ApplyTunerFrame()
+{
+    static const char *states[] = {"idle", "previous_focus", "previous_pressed", "next_focus",
+                                   "next_pressed"};
+    for (const char *state : states)
+    {
+        char id[40];
+        std::snprintf(id, sizeof(id), "tuner_%s", state);
+        const bool active = (tuner_state_ == 0U && std::strcmp(state, "idle") == 0) ||
+                            (tuner_state_ == 1U && std::strcmp(state, "previous_focus") == 0) ||
+                            (tuner_state_ == 2U && std::strcmp(state, "next_focus") == 0);
+        SetVisible(document_, id, active);
+    }
+}
+
+/* --- input ------------------------------------------------------------ */
+
+void RadioApp::HandleInput(const radio_input_event_t &event)
+{
+    if (!event.pressed)
+        return;
+    if (event.key == RADIO_INPUT_VOLUME_UP || event.key == RADIO_INPUT_VOLUME_DOWN)
+    {
+        AdjustVolume(event.key == RADIO_INPUT_VOLUME_UP ? 1 : -1);
+        return;
+    }
+
+    if (event.key == RADIO_INPUT_PAD_CLICK)
+    {
+        /* Panel tactil: dedo en zona + click corto = preset, click 3 s = graba. */
+        if (event.pressed)
+        {
+            unsigned short tx = 0, ty = 0;
+            if (radio_input_touch(&tx, &ty))
+            {
+                touch_zone_ = tx < 640 ? 0 : tx < 1280 ? 1 : 2;
+                touch_hold_active_ = true;
+                touch_fired_ = false;
+                touch_start_ = radio_input_milliseconds();
+            }
+        }
+        else if (touch_hold_active_ && !touch_fired_)
+        {
+            touch_hold_active_ = false;
+            RecallPreset(touch_zone_);
+        }
+        return;
+    }
+
+    if (mode_ == Mode::Eq)
+    {
+        if (event.key == RADIO_INPUT_TRIANGLE || event.key == RADIO_INPUT_CIRCLE)
+        {
+            mode_ = Mode::Home;
+            ApplyButtons();
+            RefreshHome();
+            return;
+        }
+        if (event.key == RADIO_INPUT_STATION_NEXT || event.key == RADIO_INPUT_RIGHT)
+        {
+            eq_sel_ = (eq_sel_ + 1) % 5;
+            RefreshEq();
+            return;
+        }
+        if (event.key == RADIO_INPUT_STATION_PREVIOUS || event.key == RADIO_INPUT_LEFT)
+        {
+            eq_sel_ = (eq_sel_ + 4) % 5;
+            RefreshEq();
+            return;
+        }
+        if (event.key == RADIO_INPUT_VOLUME_UP)
+        {
+            radio_service_eq_set_gain(eq_sel_, radio_service_eq_gain(eq_sel_) + 1);
+            SaveEq();
+            RefreshEq();
+            return;
+        }
+        if (event.key == RADIO_INPUT_VOLUME_DOWN)
+        {
+            radio_service_eq_set_gain(eq_sel_, radio_service_eq_gain(eq_sel_) - 1);
+            SaveEq();
+            RefreshEq();
+            return;
+        }
+        if (event.key == RADIO_INPUT_CROSS)
+        {
+            eq_preset_ = (eq_preset_ + 1) % 4;
+            radio_service_eq_preset(eq_preset_);
+            SaveEq();
+            RefreshEq();
+            return;
+        }
+        return;
+    }
+
+    if (mode_ == Mode::Aux || mode_ == Mode::Barrido)
+    {
+        if (event.key == RADIO_INPUT_TRIANGLE || event.key == RADIO_INPUT_CIRCLE)
+        {
+            mode_ = Mode::Home;
+            ApplyButtons();
+            RefreshHome();
+        }
+        return;
+    }
+
+    switch (mode_)
+    {
+    case Mode::Settings:
+        HandleSettingsKey(event.key);
+        return;
+    case Mode::Search:
+        HandleSearchKey(event.key);
+        return;
+    case Mode::Genres:
+        if (event.key == RADIO_INPUT_STATION_NEXT || event.key == RADIO_INPUT_RIGHT ||
+            event.key == RADIO_INPUT_DOWN)
+        {
+            if (genre_total_ && genre_start_ + genre_cursor_ + 1U < genre_total_)
+            {
+                if (genre_cursor_ + 1U < kListRows)
+                    ++genre_cursor_;
+                else
+                    ++genre_start_;
+                RefreshGenres();
+            }
+            return;
+        }
+        if (event.key == RADIO_INPUT_STATION_PREVIOUS || event.key == RADIO_INPUT_LEFT ||
+            event.key == RADIO_INPUT_UP)
+        {
+            if (genre_start_ + genre_cursor_ > 0)
+            {
+                if (genre_cursor_)
+                    --genre_cursor_;
+                else
+                    --genre_start_;
+                RefreshGenres();
+            }
+            return;
+        }
+        if (event.key == RADIO_INPUT_CROSS)
+        {
+            const unsigned index = genre_start_ + genre_cursor_;
+            if (index < genre_total_)
+            {
+                CopyString(filter_genre_, sizeof(filter_genre_), genre_facets_[index].value);
+                mode_ = Mode::List;
+                list_kind_ = ListKind::Radio;
+                list_start_ = list_cursor_ = 0;
+                BuildList();
+                RefreshList();
+                ApplyButtons();
+            }
+            return;
+        }
+        if (event.key == RADIO_INPUT_CIRCLE || event.key == RADIO_INPUT_TRIANGLE)
+        {
+            mode_ = Mode::Home;
+            ApplyButtons();
+            return;
+        }
+        return;
+    case Mode::List:
+        if (event.key == RADIO_INPUT_STATION_NEXT || event.key == RADIO_INPUT_DOWN)
+        {
+            if (list_total_ && list_start_ + list_cursor_ + 1U < list_total_)
+            {
+                if (list_cursor_ + 1U < kListRows)
+                    ++list_cursor_;
+                else
+                    ++list_start_;
+                BuildList();
+                RefreshList();
+            }
+            return;
+        }
+        if (event.key == RADIO_INPUT_STATION_PREVIOUS || event.key == RADIO_INPUT_UP)
+        {
+            if (list_start_ + list_cursor_ > 0)
+            {
+                if (list_cursor_)
+                    --list_cursor_;
+                else
+                    --list_start_;
+                BuildList();
+                RefreshList();
+            }
+            return;
+        }
+        if (event.key == RADIO_INPUT_LEFT || event.key == RADIO_INPUT_RIGHT)
+        {
+            list_kind_ = list_kind_ == ListKind::Radio ? ListKind::Favorites : ListKind::Radio;
+            list_start_ = list_cursor_ = 0;
+            BuildList();
+            RefreshList();
+            ApplyButtons();
+            return;
+        }
+        if (event.key == RADIO_INPUT_CROSS)
+        {
+            if (list_indices_[list_cursor_] != kInvalidStation)
+            {
+                tuned_index_ = list_indices_[list_cursor_];
+                PlayIndex(tuned_index_);
+                RefreshHome();
+            }
+            return;
+        }
+        if (event.key == RADIO_INPUT_SQUARE)
+        {
+            if (list_indices_[list_cursor_] != kInvalidStation)
+            {
+                radio_service_toggle_favorite(list_indices_[list_cursor_]);
+                RefreshList();
+            }
+            return;
+        }
+        if (event.key == RADIO_INPUT_CIRCLE || event.key == RADIO_INPUT_TRIANGLE)
+        {
+            mode_ = Mode::Home;
+            ApplyButtons();
+            return;
+        }
+        return;
+    default:
+        break;
+    }
+
+    // Home mode: D-pad walks the printed buttons, dial tunes.
+    if (event.key == RADIO_INPUT_LEFT || event.key == RADIO_INPUT_RIGHT)
+    {
+        const int next =
+            static_cast<int>(button_focus_) + (event.key == RADIO_INPUT_RIGHT ? 1 : -1);
+        button_focus_ = static_cast<unsigned>((next + static_cast<int>(kButtonCount)) %
+                                              static_cast<int>(kButtonCount));
+        ApplyButtons();
+        return;
+    }
+    if (event.key == RADIO_INPUT_CROSS)
+    {
+        PressButton(button_focus_);
+        return;
+    }
+    if (event.key == RADIO_INPUT_STATION_NEXT || event.key == RADIO_INPUT_STATION_PREVIOUS)
+    {
+        TuneStation(event.key == RADIO_INPUT_STATION_NEXT ? 1 : -1);
+        return;
+    }
+    if (event.key == RADIO_INPUT_SQUARE)
+    {
+        radio_service_toggle_favorite(tuned_index_);
+        return;
+    }
+    if (event.key == RADIO_INPUT_OPTIONS)
+    {
+        radio_service_refresh();
+        return;
+    }
+}
+
+/* --- poll ------------------------------------------------------------- */
+
 void RadioApp::Poll()
 {
+    if (poweroff_ticks_ >= 0)
+    {
+        if (--poweroff_ticks_ <= 0)
+        {
+            std::fflush(nullptr);
+            quit_requested_ = true;
+        }
+        return;
+    }
+    if (touch_hold_active_ && !touch_fired_ && radio_input_milliseconds() - touch_start_ >= 3000)
+    {
+        touch_fired_ = true;
+        touch_hold_active_ = false;
+        StorePreset(touch_zone_);
+    }
+    LightbarTick();
     radio_service_status_t status{};
     radio_service_get_status(&status);
     if (!have_last_status_ || status.catalog_generation != last_status_.catalog_generation ||
         status.station_count != last_status_.station_count)
     {
         RebuildFacets();
-        RefreshAll();
+        genre_total_ = static_cast<unsigned>(genre_facets_.size());
+        /* Seed the service query in every mode: HOME reads the tuned station
+         * through the same catalog view, and a late sync must not leave it
+         * empty ("No stations"). */
+        BuildList();
+        RefreshGenres();
+        RefreshList();
+        RefreshHome();
     }
     if (*pending_play_uuid_ && status.playback_state == RADIO_PLAYBACK_STOPPED)
     {
@@ -1157,16 +1190,145 @@ void RadioApp::Poll()
         status.playing_index != last_status_.playing_index ||
         status.sample_rate != last_status_.sample_rate ||
         status.channels != last_status_.channels || status.error_code != last_status_.error_code)
-    {
-        RefreshPlayback(status);
-    }
+        RefreshStatus();
     if (!have_last_status_ || status.catalog_state != last_status_.catalog_state ||
         status.refreshing != last_status_.refreshing ||
         status.searching != last_status_.searching ||
         status.sync_station_count != last_status_.sync_station_count ||
         status.error_code != last_status_.error_code)
-        RefreshConnection(status);
+    {
+        if (mode_ == Mode::Settings)
+            RefreshSettings(false);
+    }
     UpdateEqualizer(status);
     last_status_ = status;
     have_last_status_ = true;
+}
+
+void RadioApp::UpdateEqualizer(const radio_service_status_t &status)
+{
+    static const unsigned char wave[16] = {18, 28, 42, 61, 44, 30, 52, 67,
+                                           48, 24, 38, 58, 72, 49, 32, 22};
+    const bool playing = status.playback_state == RADIO_PLAYBACK_PLAYING;
+    const unsigned phase = SDL_GetTicks() / 90U;
+    for (unsigned i = 0; i < 5; ++i)
+    {
+        const int height = playing ? wave[(phase + i * 3U) % 16U] : 8;
+        char id[12];
+        std::snprintf(id, sizeof(id), "eq-%u", i);
+        SetPixelProperty(document_, id, "height", height);
+    }
+}
+
+/* --- v027: touchpad presets, lightbar pulses, EQ surface --------------- */
+
+void RadioApp::LoadPresets()
+{
+    std::FILE *file = std::fopen("/download0/radio-presets.bin", "rb");
+    if (file)
+    {
+        if (std::fread(presets_, sizeof(presets_), 1, file) != 1)
+            presets_[0] = presets_[1] = presets_[2] = -1;
+        std::fclose(file);
+    }
+}
+
+void RadioApp::SaveEq()
+{
+    std::FILE *file = std::fopen("/download0/radio-eq.txt", "wb");
+    if (file == nullptr)
+        return;
+    for (int b = 0; b < 5; ++b)
+        std::fprintf(file, "%d\n", radio_service_eq_gain(b));
+    std::fclose(file);
+}
+
+void RadioApp::SavePresets()
+{
+    std::FILE *file = std::fopen("/download0/radio-presets.bin", "wb");
+    if (file)
+    {
+        std::fwrite(presets_, sizeof(presets_), 1, file);
+        std::fclose(file);
+    }
+}
+
+void RadioApp::StorePreset(int zone)
+{
+    if (zone < 0 || zone > 2)
+        return;
+    presets_[zone] = static_cast<int>(tuned_index_);
+    preset_active_ = zone;
+    SavePresets();
+    lb_pulses_left_ = 2 * (zone + 1);
+    SetText(document_, "home-status",
+            zone == 0   ? "P1 MEMORIZADA"
+            : zone == 1 ? "P2 MEMORIZADA"
+                        : "P3 MEMORIZADA");
+}
+
+void RadioApp::RecallPreset(int zone)
+{
+    if (zone < 0 || zone > 2)
+        return;
+    if (presets_[zone] < 0)
+    {
+        SetText(document_, "home-status",
+                zone == 0   ? "P1 VACIA"
+                : zone == 1 ? "P2 VACIA"
+                            : "P3 VACIA");
+        return;
+    }
+    preset_active_ = zone;
+    tuned_index_ = static_cast<unsigned>(presets_[zone]);
+    lb_pulses_left_ = 2 * (zone + 1);
+    PlayIndex(tuned_index_);
+    RefreshHome();
+}
+
+void RadioApp::LightbarTick()
+{
+    ++lb_frame_;
+    const bool holding = touch_hold_active_ && !touch_fired_;
+    bool on;
+    if (holding)
+        on = (lb_frame_ / 7) % 2 == 0;
+    else if (lb_pulses_left_ > 0)
+    {
+        on = (lb_frame_ / 11) % 2 == 0;
+        if (!on && lb_on_)
+            --lb_pulses_left_;
+    }
+    else
+        on = preset_active_ >= 0;
+    if (on != lb_on_)
+    {
+        lb_on_ = on;
+        radio_input_lightbar(on ? 244 : 0, on ? 190 : 0, on ? 118 : 0);
+    }
+}
+
+void RadioApp::RefreshEq()
+{
+    static const char *bands[5] = {"60Hz", "250Hz", "1kHz", "4kHz", "12kHz"};
+    for (int i = 0; i < 5; ++i)
+    {
+        char id[16];
+        std::snprintf(id, sizeof(id), "eqband-%d", i);
+        char text[32];
+        std::snprintf(text, sizeof(text), "%s %s%d", bands[i],
+                      radio_service_eq_gain(i) > 0 ? "+" : "", radio_service_eq_gain(i));
+        SetText(document_, id, text);
+        SetClass(document_, id, "selected", i == eq_sel_);
+    }
+}
+
+void RadioApp::RefreshAuxPanel()
+{
+    SetText(document_, "aux-url",
+            radio_service_aux_running() ? "AUX ACTIVO - PUERTO 7000" : "RED NO DISPONIBLE");
+    const int stations = radio_service_aux_stations();
+    SetText(document_, "aux-note",
+            stations >= 0 ? "Entra desde el movil, envia tu M3U y pulsa BARRIDO"
+                          : "Sube tu lista M3U desde el movil o el PC");
 }

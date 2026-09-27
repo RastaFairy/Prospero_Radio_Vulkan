@@ -7,6 +7,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 
 #define INPUT_QUEUE_SIZE 64U
 #define PAD_SAMPLE_SIZE 120U
@@ -15,7 +16,14 @@
 #define STICK_LOW 64U
 #define STICK_HIGH 192U
 #define STICK_REPEAT_DELAY_MS UINT64_C(350)
-#define STICK_REPEAT_MS UINT64_C(110)
+#define STICK_REPEAT_MS UINT64_C(140)
+#define TUNING_REPEAT_DELAY_MS UINT64_C(420)
+#define TUNING_REPEAT_MS UINT64_C(260)
+#define STICK_ROTARY_DEADZONE_RADIUS 46.0f
+#define VOLUME_STEP_DEG 14.4f
+#define VOLUME_STEP_INTERVAL_MS UINT64_C(60)
+#define TUNING_STEP_DEG 45.0f
+#define TUNING_STEP_INTERVAL_MS UINT64_C(120)
 
 struct button_map_t
 {
@@ -33,6 +41,7 @@ extern "C"
     extern int sceUserServiceGetInitialUser(int32_t *user_id);
     extern int sceUserServiceTerminate(void);
     extern uint64_t SDL_GetTicks64(void);
+    extern int scePadSetLightBar(int32_t handle, const void *param);
 }
 
 static const button_map_t buttons[] = {
@@ -49,9 +58,18 @@ static unsigned char samples[PAD_SAMPLE_CAPACITY][PAD_SAMPLE_SIZE];
 static unsigned queue_read;
 static unsigned queue_write;
 static uint32_t button_state;
-static int analog_key = -1;
-static uint64_t analog_repeat_at;
+static float left_stick_angle;
+static float left_stick_accum;
+static bool left_rotary_active;
+static uint64_t left_step_at;
+static float right_stick_angle;
+static float right_stick_accum;
+static bool right_rotary_active;
+static uint64_t right_step_at;
 static int32_t pad_handle = -1;
+static unsigned short touch_x = 0, touch_y = 0;
+static bool touch_finger = false;
+static bool touch_valid = false;
 static bool owns_user_service;
 
 static uint64_t monotonic_milliseconds(void)
@@ -59,17 +77,53 @@ static uint64_t monotonic_milliseconds(void)
     return SDL_GetTicks64();
 }
 
-static int stick_direction(uint8_t x, uint8_t y)
+static float stick_angle(uint8_t x, uint8_t y, float *radius)
 {
-    const int horizontal = (int)x - 128;
-    const int vertical = (int)y - 128;
-    const int horizontal_size = horizontal < 0 ? -horizontal : horizontal;
-    const int vertical_size = vertical < 0 ? -vertical : vertical;
-    if (horizontal_size < 64 && vertical_size < 64)
-        return -1;
-    if (horizontal_size > vertical_size)
-        return x < STICK_LOW ? RADIO_INPUT_LEFT : x > STICK_HIGH ? RADIO_INPUT_RIGHT : -1;
-    return y < STICK_LOW ? RADIO_INPUT_UP : y > STICK_HIGH ? RADIO_INPUT_DOWN : -1;
+    const float dx = (float)x - 128.0f;
+    const float dy = (float)y - 128.0f;
+    *radius = sqrtf(dx * dx + dy * dy);
+    return atan2f(dy, dx) * (180.0f / 3.14159265f);
+}
+
+static void queue_push(radio_input_key_t key, bool pressed);
+
+/* Rotary potentiometer emulation: while the stick stays deflected, accumulate
+ * the angular travel around its centre; every step_deg of rotation emits one
+ * step (clockwise = louder / next station), rate-limited per stick. Dropping
+ * below the deadzone resets the origin so each gesture starts where the user
+ * grabbed the knob. */
+static void rotary_update(uint64_t now, uint64_t step_interval_ms, float angle, float radius,
+                          float step_deg, bool *active, float *last_angle, float *accum,
+                          uint64_t *step_at, radio_input_key_t clockwise_key,
+                          radio_input_key_t anticlockwise_key)
+{
+    if (radius < STICK_ROTARY_DEADZONE_RADIUS)
+    {
+        *active = false;
+        return;
+    }
+    if (!*active)
+    {
+        *active = true;
+        *last_angle = angle;
+        *accum = 0.0f;
+        return;
+    }
+    float delta = angle - *last_angle;
+    if (delta > 180.0f)
+        delta -= 360.0f;
+    if (delta < -180.0f)
+        delta += 360.0f;
+    *last_angle = angle;
+    if (delta == 0.0f || now < *step_at)
+        return;
+    *accum += delta;
+    if (fabsf(*accum) < step_deg)
+        return;
+    const int direction = *accum > 0.0f ? 1 : -1;
+    *accum -= direction * step_deg;
+    *step_at = now + step_interval_ms;
+    queue_push(direction > 0 ? clockwise_key : anticlockwise_key, true);
 }
 
 static void queue_push(radio_input_key_t key, bool pressed)
@@ -84,6 +138,30 @@ static void queue_push(radio_input_key_t key, bool pressed)
     queue_write = next;
 }
 
+static void update_analog_action(int current, int *previous, uint64_t *repeat_at, uint64_t now,
+                                 uint64_t repeat_delay)
+{
+    if (current == *previous)
+        return;
+    if (*previous >= 0)
+        queue_push((radio_input_key_t)*previous, false);
+    *previous = current;
+    if (current >= 0)
+    {
+        queue_push((radio_input_key_t)current, true);
+        *repeat_at = now + repeat_delay;
+    }
+}
+
+static void repeat_analog_action(int action, uint64_t *repeat_at, uint64_t now,
+                                 uint64_t repeat_period)
+{
+    if (action < 0 || now < *repeat_at)
+        return;
+    queue_push((radio_input_key_t)action, true);
+    *repeat_at = now + repeat_period;
+}
+
 static void process_sample(const unsigned char *sample)
 {
     uint32_t current;
@@ -96,23 +174,47 @@ static void process_sample(const unsigned char *sample)
     for (unsigned i = 0; i < sizeof(buttons) / sizeof(buttons[0]); ++i)
     {
         if ((changed & buttons[i].button) != 0)
-        {
             queue_push(buttons[i].key, (current & buttons[i].button) != 0);
-        }
     }
     button_state = current;
 
-    int current_analog = neutral ? -1 : stick_direction(sample[4], sample[5]);
-    if (current_analog != analog_key)
+    /* Touchpad: click is bit 20 of the button mask; the finger block
+     * sits at 0x20 (counter u16, status, then id+x+y slots). The
+     * validity gate keeps the feature inert on unknown layouts. */
+    if ((current & UINT32_C(0x00100000)) != 0)
+        queue_push(RADIO_INPUT_PAD_CLICK, true);
+    else if (button_state != 0)
+        queue_push(RADIO_INPUT_PAD_CLICK, false);
+    if (sample[0x20] != 0 || sample[0x21] != 0)
     {
-        if (analog_key >= 0)
-            queue_push((radio_input_key_t)analog_key, false);
-        analog_key = current_analog;
-        if (analog_key >= 0)
+        const unsigned short px = (unsigned short)(sample[0x25] | (sample[0x26] << 8));
+        const unsigned short py = (unsigned short)(sample[0x27] | (sample[0x28] << 8));
+        if (px < 1920 && py < 1080)
         {
-            queue_push((radio_input_key_t)analog_key, true);
-            analog_repeat_at = monotonic_milliseconds() + STICK_REPEAT_DELAY_MS;
+            touch_x = px;
+            touch_y = py;
+            touch_finger = (sample[0x24] & 0x80) == 0;
+            touch_valid = true;
         }
+    }
+
+    const uint64_t now = monotonic_milliseconds();
+    if (neutral)
+    {
+        left_rotary_active = false;
+        right_rotary_active = false;
+    }
+    else
+    {
+        float radius = 0.0f;
+        const float left_angle = stick_angle(sample[4], sample[5], &radius);
+        rotary_update(now, VOLUME_STEP_INTERVAL_MS, left_angle, radius, VOLUME_STEP_DEG,
+                      &left_rotary_active, &left_stick_angle, &left_stick_accum, &left_step_at,
+                      RADIO_INPUT_VOLUME_UP, RADIO_INPUT_VOLUME_DOWN);
+        const float right_angle = stick_angle(sample[6], sample[7], &radius);
+        rotary_update(now, TUNING_STEP_INTERVAL_MS, right_angle, radius, TUNING_STEP_DEG,
+                      &right_rotary_active, &right_stick_angle, &right_stick_accum, &right_step_at,
+                      RADIO_INPUT_STATION_NEXT, RADIO_INPUT_STATION_PREVIOUS);
     }
 }
 
@@ -135,8 +237,14 @@ bool radio_input_init(void)
     }
     queue_read = queue_write = 0;
     button_state = 0;
-    analog_key = -1;
-    analog_repeat_at = 0;
+    left_stick_angle = left_stick_accum = 0.0f;
+    left_rotary_active = false;
+    left_step_at = 0;
+    right_stick_angle = right_stick_accum = 0.0f;
+    right_rotary_active = false;
+    right_step_at = 0;
+    (void)update_analog_action;
+    (void)repeat_analog_action;
     return true;
 }
 
@@ -147,15 +255,6 @@ void radio_input_poll(void)
     const int count = scePadRead(pad_handle, samples, PAD_SAMPLE_CAPACITY);
     for (int i = 0; i < count; ++i)
         process_sample(samples[i]);
-    if (analog_key >= 0)
-    {
-        const uint64_t now = monotonic_milliseconds();
-        if (now >= analog_repeat_at)
-        {
-            queue_push((radio_input_key_t)analog_key, true);
-            analog_repeat_at = now + STICK_REPEAT_MS;
-        }
-    }
 }
 
 bool radio_input_next(radio_input_event_t *event)
@@ -179,6 +278,30 @@ bool radio_input_pressed(radio_input_key_t key)
     return false;
 }
 
+unsigned long long radio_input_milliseconds(void)
+{
+    return SDL_GetTicks64();
+}
+
+bool radio_input_touch(unsigned short *x, unsigned short *y)
+{
+    if (!touch_valid)
+        return false;
+    if (x)
+        *x = touch_x;
+    if (y)
+        *y = touch_y;
+    return touch_finger;
+}
+
+void radio_input_lightbar(int r, int g, int b)
+{
+    if (pad_handle < 0)
+        return;
+    const unsigned char param[4] = {(unsigned char)r, (unsigned char)g, (unsigned char)b, 0};
+    scePadSetLightBar(pad_handle, param);
+}
+
 void radio_input_shutdown(void)
 {
     if (pad_handle >= 0)
@@ -193,6 +316,6 @@ void radio_input_shutdown(void)
     }
     queue_read = queue_write = 0;
     button_state = 0;
-    analog_key = -1;
-    analog_repeat_at = 0;
+    left_rotary_active = false;
+    right_rotary_active = false;
 }

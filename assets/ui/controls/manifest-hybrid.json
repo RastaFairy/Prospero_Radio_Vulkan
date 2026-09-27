@@ -1,0 +1,1103 @@
+{
+  "schema": "prospero-radio-controls-hybrid/v1",
+  "source": "../art/radio_front_hybrid_4k.ktx2",
+  "coordinateSpace": {
+    "width": 1920,
+    "height": 1080,
+    "origin": "top-left"
+  },
+  "composition": {
+    "projection": "orthographic-front",
+    "vanishingPoint": null,
+    "radioBounds": [
+      35.0,
+      279.65,
+      1850.0,
+      520.71
+    ],
+    "displayRect": [
+      480.57,
+      342.09,
+      958.86,
+      309.04
+    ],
+    "displayContentRect": [
+      515.49,
+      383.36,
+      889.02,
+      228.61
+    ],
+    "displayFill": "matte smoked brown-amber 1990s radio display glass with soft center phosphor warmth; draw live metadata over it",
+    "leftDialCenter": [
+      330.28,
+      518.83
+    ],
+    "rightDialCenter": [
+      1589.72,
+      518.83
+    ],
+    "dialGeometry": "true circles with concentric planar rings",
+    "volumeStep": 5,
+    "preserveAspectRatio": true,
+    "rearChassisVisible": true
+  },
+  "runtimeTexture": {
+    "format": "TGA type 2, 32-bit BGRA, 8-bit alpha, top-left origin",
+    "loader": "Ps5VulkanRenderInterface::LoadTexture",
+    "sampling": "KTX2 backplate uses mipmapping; TGA atlases use single-level nearest/clamp, with 8px edge-extruded gutters for filter safety",
+    "atlasFramesUseHalfOpenUvRect": true,
+    "atlasGutterPx": 8,
+    "atlasGutterMode": "edge-extruded",
+    "atlasMipmaps": false,
+    "atlasUvCoreExcludesGutter": true
+  },
+  "buttons": {
+    "file": "buttons.tga",
+    "dimensions": [
+      2352,
+      720
+    ],
+    "cell": [
+      320,
+      128
+    ],
+    "columns": 7,
+    "rows": 5,
+    "extrudedGutterPx": 8,
+    "mipLevels": 1,
+    "stateRows": [
+      "normal",
+      "focus",
+      "pressed",
+      "selected",
+      "selected_focus"
+    ],
+    "controls": {
+      "home": {
+        "labelEs": "Inicio",
+        "targetRect": [
+          403.31,
+          709.34,
+          154.52,
+          61.38
+        ],
+        "frames": {
+          "normal": {
+            "index": 0,
+            "x": 8,
+            "y": 8,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.003401,
+              0.011111,
+              0.139456,
+              0.188889
+            ]
+          },
+          "focus": {
+            "index": 7,
+            "x": 8,
+            "y": 152,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.003401,
+              0.211111,
+              0.139456,
+              0.388889
+            ]
+          },
+          "pressed": {
+            "index": 14,
+            "x": 8,
+            "y": 296,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.003401,
+              0.411111,
+              0.139456,
+              0.588889
+            ]
+          },
+          "selected": {
+            "index": 21,
+            "x": 8,
+            "y": 440,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.003401,
+              0.611111,
+              0.139456,
+              0.788889
+            ]
+          },
+          "selected_focus": {
+            "index": 28,
+            "x": 8,
+            "y": 584,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.003401,
+              0.811111,
+              0.139456,
+              0.988889
+            ]
+          }
+        }
+      },
+      "radio": {
+        "labelEs": "Radio",
+        "targetRect": [
+          563.12,
+          709.34,
+          154.52,
+          61.38
+        ],
+        "frames": {
+          "normal": {
+            "index": 1,
+            "x": 344,
+            "y": 8,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.146259,
+              0.011111,
+              0.282313,
+              0.188889
+            ]
+          },
+          "focus": {
+            "index": 8,
+            "x": 344,
+            "y": 152,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.146259,
+              0.211111,
+              0.282313,
+              0.388889
+            ]
+          },
+          "pressed": {
+            "index": 15,
+            "x": 344,
+            "y": 296,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.146259,
+              0.411111,
+              0.282313,
+              0.588889
+            ]
+          },
+          "selected": {
+            "index": 22,
+            "x": 344,
+            "y": 440,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.146259,
+              0.611111,
+              0.282313,
+              0.788889
+            ]
+          },
+          "selected_focus": {
+            "index": 29,
+            "x": 344,
+            "y": 584,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.146259,
+              0.811111,
+              0.282313,
+              0.988889
+            ]
+          }
+        }
+      },
+      "favorites": {
+        "labelEs": "Favoritos",
+        "targetRect": [
+          722.93,
+          709.34,
+          154.52,
+          61.38
+        ],
+        "frames": {
+          "normal": {
+            "index": 2,
+            "x": 680,
+            "y": 8,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.289116,
+              0.011111,
+              0.42517,
+              0.188889
+            ]
+          },
+          "focus": {
+            "index": 9,
+            "x": 680,
+            "y": 152,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.289116,
+              0.211111,
+              0.42517,
+              0.388889
+            ]
+          },
+          "pressed": {
+            "index": 16,
+            "x": 680,
+            "y": 296,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.289116,
+              0.411111,
+              0.42517,
+              0.588889
+            ]
+          },
+          "selected": {
+            "index": 23,
+            "x": 680,
+            "y": 440,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.289116,
+              0.611111,
+              0.42517,
+              0.788889
+            ]
+          },
+          "selected_focus": {
+            "index": 30,
+            "x": 680,
+            "y": 584,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.289116,
+              0.811111,
+              0.42517,
+              0.988889
+            ]
+          }
+        }
+      },
+      "genres": {
+        "labelEs": "Generos",
+        "targetRect": [
+          882.74,
+          709.34,
+          154.52,
+          61.38
+        ],
+        "frames": {
+          "normal": {
+            "index": 3,
+            "x": 1016,
+            "y": 8,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.431973,
+              0.011111,
+              0.568027,
+              0.188889
+            ]
+          },
+          "focus": {
+            "index": 10,
+            "x": 1016,
+            "y": 152,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.431973,
+              0.211111,
+              0.568027,
+              0.388889
+            ]
+          },
+          "pressed": {
+            "index": 17,
+            "x": 1016,
+            "y": 296,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.431973,
+              0.411111,
+              0.568027,
+              0.588889
+            ]
+          },
+          "selected": {
+            "index": 24,
+            "x": 1016,
+            "y": 440,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.431973,
+              0.611111,
+              0.568027,
+              0.788889
+            ]
+          },
+          "selected_focus": {
+            "index": 31,
+            "x": 1016,
+            "y": 584,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.431973,
+              0.811111,
+              0.568027,
+              0.988889
+            ]
+          }
+        }
+      },
+      "search": {
+        "labelEs": "Buscar",
+        "targetRect": [
+          1042.55,
+          709.34,
+          154.52,
+          61.38
+        ],
+        "frames": {
+          "normal": {
+            "index": 4,
+            "x": 1352,
+            "y": 8,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.57483,
+              0.011111,
+              0.710884,
+              0.188889
+            ]
+          },
+          "focus": {
+            "index": 11,
+            "x": 1352,
+            "y": 152,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.57483,
+              0.211111,
+              0.710884,
+              0.388889
+            ]
+          },
+          "pressed": {
+            "index": 18,
+            "x": 1352,
+            "y": 296,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.57483,
+              0.411111,
+              0.710884,
+              0.588889
+            ]
+          },
+          "selected": {
+            "index": 25,
+            "x": 1352,
+            "y": 440,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.57483,
+              0.611111,
+              0.710884,
+              0.788889
+            ]
+          },
+          "selected_focus": {
+            "index": 32,
+            "x": 1352,
+            "y": 584,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.57483,
+              0.811111,
+              0.710884,
+              0.988889
+            ]
+          }
+        }
+      },
+      "settings": {
+        "labelEs": "Ajustes",
+        "targetRect": [
+          1202.36,
+          709.34,
+          154.52,
+          61.38
+        ],
+        "frames": {
+          "normal": {
+            "index": 5,
+            "x": 1688,
+            "y": 8,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.717687,
+              0.011111,
+              0.853741,
+              0.188889
+            ]
+          },
+          "focus": {
+            "index": 12,
+            "x": 1688,
+            "y": 152,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.717687,
+              0.211111,
+              0.853741,
+              0.388889
+            ]
+          },
+          "pressed": {
+            "index": 19,
+            "x": 1688,
+            "y": 296,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.717687,
+              0.411111,
+              0.853741,
+              0.588889
+            ]
+          },
+          "selected": {
+            "index": 26,
+            "x": 1688,
+            "y": 440,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.717687,
+              0.611111,
+              0.853741,
+              0.788889
+            ]
+          },
+          "selected_focus": {
+            "index": 33,
+            "x": 1688,
+            "y": 584,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.717687,
+              0.811111,
+              0.853741,
+              0.988889
+            ]
+          }
+        }
+      },
+      "play_pause": {
+        "labelEs": "Reproducir / pausa",
+        "targetRect": [
+          1362.17,
+          709.34,
+          154.52,
+          61.38
+        ],
+        "frames": {
+          "normal": {
+            "index": 6,
+            "x": 2024,
+            "y": 8,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.860544,
+              0.011111,
+              0.996599,
+              0.188889
+            ]
+          },
+          "focus": {
+            "index": 13,
+            "x": 2024,
+            "y": 152,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.860544,
+              0.211111,
+              0.996599,
+              0.388889
+            ]
+          },
+          "pressed": {
+            "index": 20,
+            "x": 2024,
+            "y": 296,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.860544,
+              0.411111,
+              0.996599,
+              0.588889
+            ]
+          },
+          "selected": {
+            "index": 27,
+            "x": 2024,
+            "y": 440,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.860544,
+              0.611111,
+              0.996599,
+              0.788889
+            ]
+          },
+          "selected_focus": {
+            "index": 34,
+            "x": 2024,
+            "y": 584,
+            "width": 320,
+            "height": 128,
+            "uv": [
+              0.860544,
+              0.811111,
+              0.996599,
+              0.988889
+            ]
+          }
+        }
+      }
+    }
+  },
+  "volume": {
+    "file": "volume.tga",
+    "dimensions": [
+      1664,
+      2496
+    ],
+    "cell": [
+      400,
+      400
+    ],
+    "columns": 4,
+    "rows": 6,
+    "extrudedGutterPx": 8,
+    "mipLevels": 1,
+    "content": "transparent overlay; static metallic dial remains in radio_front_4k.ktx2",
+    "levels": [
+      {
+        "value": 0,
+        "index": 0,
+        "x": 8,
+        "y": 8,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.004808,
+          0.003205,
+          0.245192,
+          0.163462
+        ]
+      },
+      {
+        "value": 5,
+        "index": 1,
+        "x": 424,
+        "y": 8,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.254808,
+          0.003205,
+          0.495192,
+          0.163462
+        ]
+      },
+      {
+        "value": 10,
+        "index": 2,
+        "x": 840,
+        "y": 8,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.504808,
+          0.003205,
+          0.745192,
+          0.163462
+        ]
+      },
+      {
+        "value": 15,
+        "index": 3,
+        "x": 1256,
+        "y": 8,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.754808,
+          0.003205,
+          0.995192,
+          0.163462
+        ]
+      },
+      {
+        "value": 20,
+        "index": 4,
+        "x": 8,
+        "y": 424,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.004808,
+          0.169872,
+          0.245192,
+          0.330128
+        ]
+      },
+      {
+        "value": 25,
+        "index": 5,
+        "x": 424,
+        "y": 424,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.254808,
+          0.169872,
+          0.495192,
+          0.330128
+        ]
+      },
+      {
+        "value": 30,
+        "index": 6,
+        "x": 840,
+        "y": 424,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.504808,
+          0.169872,
+          0.745192,
+          0.330128
+        ]
+      },
+      {
+        "value": 35,
+        "index": 7,
+        "x": 1256,
+        "y": 424,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.754808,
+          0.169872,
+          0.995192,
+          0.330128
+        ]
+      },
+      {
+        "value": 40,
+        "index": 8,
+        "x": 8,
+        "y": 840,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.004808,
+          0.336538,
+          0.245192,
+          0.496795
+        ]
+      },
+      {
+        "value": 45,
+        "index": 9,
+        "x": 424,
+        "y": 840,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.254808,
+          0.336538,
+          0.495192,
+          0.496795
+        ]
+      },
+      {
+        "value": 50,
+        "index": 10,
+        "x": 840,
+        "y": 840,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.504808,
+          0.336538,
+          0.745192,
+          0.496795
+        ]
+      },
+      {
+        "value": 55,
+        "index": 11,
+        "x": 1256,
+        "y": 840,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.754808,
+          0.336538,
+          0.995192,
+          0.496795
+        ]
+      },
+      {
+        "value": 60,
+        "index": 12,
+        "x": 8,
+        "y": 1256,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.004808,
+          0.503205,
+          0.245192,
+          0.663462
+        ]
+      },
+      {
+        "value": 65,
+        "index": 13,
+        "x": 424,
+        "y": 1256,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.254808,
+          0.503205,
+          0.495192,
+          0.663462
+        ]
+      },
+      {
+        "value": 70,
+        "index": 14,
+        "x": 840,
+        "y": 1256,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.504808,
+          0.503205,
+          0.745192,
+          0.663462
+        ]
+      },
+      {
+        "value": 75,
+        "index": 15,
+        "x": 1256,
+        "y": 1256,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.754808,
+          0.503205,
+          0.995192,
+          0.663462
+        ]
+      },
+      {
+        "value": 80,
+        "index": 16,
+        "x": 8,
+        "y": 1672,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.004808,
+          0.669872,
+          0.245192,
+          0.830128
+        ]
+      },
+      {
+        "value": 85,
+        "index": 17,
+        "x": 424,
+        "y": 1672,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.254808,
+          0.669872,
+          0.495192,
+          0.830128
+        ]
+      },
+      {
+        "value": 90,
+        "index": 18,
+        "x": 840,
+        "y": 1672,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.504808,
+          0.669872,
+          0.745192,
+          0.830128
+        ]
+      },
+      {
+        "value": 95,
+        "index": 19,
+        "x": 1256,
+        "y": 1672,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.754808,
+          0.669872,
+          0.995192,
+          0.830128
+        ]
+      },
+      {
+        "value": 100,
+        "index": 20,
+        "x": 8,
+        "y": 2088,
+        "width": 400,
+        "height": 400,
+        "uv": [
+          0.004808,
+          0.836538,
+          0.245192,
+          0.996795
+        ]
+      }
+    ],
+    "focusOverlay": {
+      "index": 21,
+      "x": 424,
+      "y": 2088,
+      "width": 400,
+      "height": 400,
+      "uv": [
+        0.254808,
+        0.836538,
+        0.495192,
+        0.996795
+      ],
+      "drawOverCurrentLevel": true
+    },
+    "unusedCells": [
+      22,
+      23
+    ],
+    "step": 5,
+    "rounding": "nearest 5; clamp to 0..100",
+    "frameFormula": "clamp(floor((volume + 2.5) / 5), 0, 20)",
+    "logicalTargetRect": [
+      177.88,
+      366.43,
+      304.8,
+      304.81
+    ],
+    "logicalCenter": [
+      330.28,
+      518.83
+    ],
+    "drawOrder": [
+      "radio_front_hybrid_4k.ktx2",
+      "volume-level-frame",
+      "focus-overlay-when-volume-has-focus"
+    ]
+  },
+  "tuner": {
+    "file": "tuner.tga",
+    "dimensions": [
+      1740,
+      112
+    ],
+    "cell": [
+      332,
+      96
+    ],
+    "extrudedGutterPx": 8,
+    "mipLevels": 1,
+    "frames": {
+      "idle": {
+        "index": 0,
+        "x": 8,
+        "y": 8,
+        "width": 332,
+        "height": 96,
+        "uv": [
+          0.004598,
+          0.071429,
+          0.195402,
+          0.928571
+        ]
+      },
+      "previous_focus": {
+        "index": 1,
+        "x": 356,
+        "y": 8,
+        "width": 332,
+        "height": 96,
+        "uv": [
+          0.204598,
+          0.071429,
+          0.395402,
+          0.928571
+        ]
+      },
+      "previous_pressed": {
+        "index": 2,
+        "x": 704,
+        "y": 8,
+        "width": 332,
+        "height": 96,
+        "uv": [
+          0.404598,
+          0.071429,
+          0.595402,
+          0.928571
+        ]
+      },
+      "next_focus": {
+        "index": 3,
+        "x": 1052,
+        "y": 8,
+        "width": 332,
+        "height": 96,
+        "uv": [
+          0.604598,
+          0.071429,
+          0.795402,
+          0.928571
+        ]
+      },
+      "next_pressed": {
+        "index": 4,
+        "x": 1400,
+        "y": 8,
+        "width": 332,
+        "height": 96,
+        "uv": [
+          0.804598,
+          0.071429,
+          0.995402,
+          0.928571
+        ]
+      }
+    },
+    "targetRect": [
+      1501.88,
+      625.73,
+      175.68,
+      50.8
+    ],
+    "directions": {
+      "previous": {
+        "logicalCenter": [
+          1542.09,
+          651.13
+        ],
+        "action": "previous_station"
+      },
+      "next": {
+        "logicalCenter": [
+          1637.35,
+          651.13
+        ],
+        "action": "next_station"
+      }
+    },
+    "semantics": "Digital directional previous/next buttons; never rotate the tuner knob."
+  },
+  "albumArtwork": {
+    "frameFile": "album-art-frame.tga",
+    "frameDimensions": [
+      320,
+      320
+    ],
+    "visibility": "Show only when actual station artwork is available; otherwise let text use the full display width.",
+    "artworkIsDynamic": true
+  },
+  "screen": {
+    "rect": [
+      480.57,
+      342.09,
+      958.86,
+      309.04
+    ],
+    "contentRect": [
+      515.49,
+      383.36,
+      889.02,
+      228.61
+    ],
+    "backgroundTextIsBakedIn": false,
+    "backgroundIsUniform": false,
+    "surfaceStyle": "matte smoked amber display glass, 1990s radio VFD/LCD look, orange phosphor-style text",
+    "recommendedTextColors": {
+      "primary": "#F4BE76",
+      "secondary": "#E2A658",
+      "muted": "#BC7E39"
+    },
+    "contentSource": "live Radio Browser station metadata and stream now-playing metadata when supplied",
+    "fields": [
+      "station",
+      "location_or_channel",
+      "language",
+      "codec",
+      "bitrate",
+      "artist",
+      "track_title",
+      "optional_album_art"
+    ]
+  }
+}

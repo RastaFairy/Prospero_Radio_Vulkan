@@ -6,7 +6,7 @@
  * Bridges standard C++ allocation operators to the clean-room libc module
  * without introducing exceptions, RTTI, or the complete libc++ runtime.
  *
- * ProsperoRadio modernized fork (01.000.017). Applied by overlay/apply-vulkan.py.
+ * ProsperoRadio modernized fork. Applied by overlay/apply-vulkan.py.
  *
  * Two problems on the target console shaped this fork:
  *
@@ -76,11 +76,20 @@ const bool g_runtime_log_ready = []() {
     std::FILE *log = std::freopen("/download0/prospero-radio.log", "a", stderr);
     if (log == nullptr)
         return false;
+    /* freopen on a regular file switches the stream to fully buffered; the
+     * banner alone would then sit in the stdio buffer forever because killed
+     * titles never run the exit flushes. Keep stderr unbuffered so every
+     * line reaches /download0 as it is written. */
+    std::setvbuf(log, nullptr, _IONBF, 0);
     /* ftell right after an append-open is unreliable on the console libc;
      * seek to the end explicitly before deciding to rotate. */
     std::fseek(log, 0, SEEK_END);
     if (std::ftell(log) > 2u * 1024u * 1024u)
+    {
         log = std::freopen("/download0/prospero-radio.log", "w", stderr);
+        if (log != nullptr)
+            std::setvbuf(log, nullptr, _IONBF, 0);
+    }
     std::fprintf(stderr, "[PS5-RT] runtime log ready (app_cpp_runtime fork __RUNTIME_VERSION__)\n");
     return log != nullptr;
 }();

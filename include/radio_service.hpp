@@ -11,19 +11,22 @@
 #define RADIO_RANK_NONE UINT16_MAX
 #define RADIO_MAX_FACETS 512
 
-enum radio_facet_kind_t {
+enum radio_facet_kind_t
+{
     RADIO_FACET_COUNTRY,
     RADIO_FACET_GENRE,
     RADIO_FACET_LANGUAGE
 };
 
-struct radio_facet_t {
+struct radio_facet_t
+{
     char value[64];
     char label[80];
     uint32_t station_count;
 };
 
-struct radio_catalog_query_t {
+struct radio_catalog_query_t
+{
     char name[157];
     char country_code[4];
     char tag[64];
@@ -31,14 +34,16 @@ struct radio_catalog_query_t {
     uint32_t bitrate_min;
 };
 
-enum radio_catalog_order_t {
+enum radio_catalog_order_t
+{
     RADIO_CATALOG_ORDER_POPULAR,
     RADIO_CATALOG_ORDER_TRENDING,
     RADIO_CATALOG_ORDER_VOTED,
     RADIO_CATALOG_ORDER_NAME
 };
 
-struct radio_station_t {
+struct radio_station_t
+{
     char uuid[40];
     char name[112];
     char url[512];
@@ -58,14 +63,16 @@ struct radio_station_t {
     uint16_t voted_rank;
 };
 
-enum radio_catalog_state_t {
+enum radio_catalog_state_t
+{
     RADIO_CATALOG_LOADING,
     RADIO_CATALOG_CACHED,
     RADIO_CATALOG_READY,
     RADIO_CATALOG_ERROR
 };
 
-enum radio_playback_state_t {
+enum radio_playback_state_t
+{
     RADIO_PLAYBACK_STOPPED,
     RADIO_PLAYBACK_CONNECTING,
     RADIO_PLAYBACK_BUFFERING,
@@ -74,7 +81,8 @@ enum radio_playback_state_t {
     RADIO_PLAYBACK_ERROR
 };
 
-struct radio_service_status_t {
+struct radio_service_status_t
+{
     radio_catalog_state_t catalog_state;
     radio_playback_state_t playback_state;
     unsigned catalog_generation;
@@ -91,20 +99,30 @@ struct radio_service_status_t {
 
 bool radio_service_init(void);
 void radio_service_shutdown(void);
-void radio_service_get_status(radio_service_status_t * out_status);
-bool radio_service_get_station(unsigned index, radio_station_t * out_station);
-bool radio_service_query_page(const radio_catalog_query_t * query,
-                              radio_catalog_order_t order,
-                              bool favorites_only, unsigned offset,
-                              unsigned limit, unsigned * out_total);
+void radio_service_get_status(radio_service_status_t *out_status);
+bool radio_service_get_station(unsigned index, radio_station_t *out_station);
+bool radio_service_query_page(const radio_catalog_query_t *query, radio_catalog_order_t order,
+                              bool favorites_only, unsigned offset, unsigned limit,
+                              unsigned *out_total);
 bool radio_service_station_is_playing(unsigned index);
-bool radio_service_get_playing_station(radio_station_t * out_station);
+bool radio_service_get_playing_station(radio_station_t *out_station);
 unsigned radio_service_get_facet_count(radio_facet_kind_t kind);
-bool radio_service_get_facet(radio_facet_kind_t kind, unsigned index,
-                             radio_facet_t * out_facet);
-bool radio_service_is_favorite(const char * uuid);
+bool radio_service_get_facet(radio_facet_kind_t kind, unsigned index, radio_facet_t *out_facet);
+bool radio_service_is_favorite(const char *uuid);
+/* v027 graphic equalizer: five bands, gains in dB (-12..+12). */
+void radio_service_eq_set_gain(int band, int gain_db);
+int radio_service_eq_gain(int band);
+void radio_service_eq_preset(int preset); /* 0 flat, 1 rock, 2 pop, 3 jazz */
+int radio_service_eq_preset(void); /* -1 when the current band gains are custom */
+/* AUX ingest server state for the AUX/BARRIDO surfaces. */
+void radio_service_aux_start(void);
+bool radio_service_aux_running(void);
+int radio_service_aux_stations(void);
 bool radio_service_toggle_favorite(unsigned station_index);
 bool radio_service_refresh(void);
-bool radio_service_search(const radio_catalog_query_t * query);
+bool radio_service_search(const radio_catalog_query_t *query);
 void radio_service_play(unsigned station_index);
 void radio_service_stop(void);
+void radio_service_set_volume(unsigned volume_percent);
+unsigned radio_service_get_volume(void);
+unsigned radio_service_get_favorite_count(void);

@@ -685,6 +685,7 @@ Bytes write_executable(const Image &image, std::span<const Stub> stubs, const Op
 
     std::vector<Import> imports;
     std::vector<const Stub *> module_order;
+    std::vector<bool> imported_symbols(image.dynamic_symbols.size());
     for (const std::string &needed : image.needed)
     {
         const auto provider = std::find_if(stubs.begin(), stubs.end(), [&](const Stub &candidate)
@@ -706,8 +707,13 @@ Bytes write_executable(const Image &image, std::span<const Stub> stubs, const Op
                 break;
             }
         }
+        // ELF unresolved weak symbols resolve to zero when no provider exists.
+        // Keep them as weak dynamic symbols instead of inventing a PS5 SDK import.
+        if (provider == nullptr && symbol.weak())
+            continue;
         require(provider != nullptr, "no public SDK stub exports required symbol " + symbol.name);
         imports.push_back({symbol.name, provider, 0, 0, static_cast<std::uint32_t>(i), {}});
+        imported_symbols[i] = true;
     }
 
     std::vector<ModuleRecord> modules;
@@ -753,6 +759,21 @@ Bytes write_executable(const Image &image, std::span<const Stub> stubs, const Op
         hash_names[import.dynamic_symbol] = nid(import.plain) + "#" +
                                             import.provider->library_name + "#" +
                                             import.provider->module_name;
+    }
+    // Preserve unprovided weak symbols in dynsym so their relocations keep ELF's
+    // zero-resolution behavior; they do not belong in the SDK import hash.
+    for (std::size_t i = 1; i < image.dynamic_symbols.size(); ++i)
+    {
+        const elf::Symbol &source = image.dynamic_symbols[i];
+        if (!source.undefined() || !source.weak() || imported_symbols[i])
+            continue;
+        const std::size_t at = i * 24;
+        write_u32(dynamic_symbols, at, strings.add(source.name));
+        dynamic_symbols[at + 4] = source.info;
+        dynamic_symbols[at + 5] = source.other;
+        write_u16(dynamic_symbols, at + 6, source.section);
+        write_u64(dynamic_symbols, at + 8, source.value);
+        write_u64(dynamic_symbols, at + 16, source.size);
     }
     const Bytes dynamic_strings = strings.data();
     const Bytes hash = build_sysv_hash(hash_names);

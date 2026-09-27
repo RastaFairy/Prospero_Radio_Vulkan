@@ -1,0 +1,11 @@
+/* Generated at build time from controls/manifest-hybrid.json. */
+
+.volume-frame-img { position: absolute; left: 177.9px; top: 366.4px; width: 304.8px; height: 304.8px; }
+.tuner-frame-img { position: absolute; left: 1501.9px; top: 625.7px; width: 175.7px; height: 50.8px; }
+.btn-rect-home { position: absolute; left: 403.3px; top: 709.3px; width: 154.5px; height: 61.4px; }
+.btn-rect-radio { position: absolute; left: 563.1px; top: 709.3px; width: 154.5px; height: 61.4px; }
+.btn-rect-favorites { position: absolute; left: 722.9px; top: 709.3px; width: 154.5px; height: 61.4px; }
+.btn-rect-genres { position: absolute; left: 882.7px; top: 709.3px; width: 154.5px; height: 61.4px; }
+.btn-rect-search { position: absolute; left: 1042.5px; top: 709.3px; width: 154.5px; height: 61.4px; }
+.btn-rect-settings { position: absolute; left: 1202.4px; top: 709.3px; width: 154.5px; height: 61.4px; }
+.btn-rect-play-pause { position: absolute; left: 1362.2px; top: 709.3px; width: 154.5px; height: 61.4px; }

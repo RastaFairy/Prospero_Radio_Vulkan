@@ -315,7 +315,26 @@ BitmapFontFace *FindBitmapFont(const Rml::String &family, Rml::Style::FontStyle 
             font->Weight() == weight && font->Metrics().size == size)
             return font.get();
     }
-    return nullptr;
+    /* Nearest registered size: the interface uses sizes (14, 15, 17, 18 px)
+     * that have no exact bitmap face; render with the closest one instead of
+     * dropping the text. */
+    BitmapFontFace *nearest = nullptr;
+    int best_distance = 0;
+    for (const auto &font : fonts)
+    {
+        if (font->Family() == normalized_family && font->Style() == style &&
+            font->Weight() == weight)
+        {
+            const int distance = font->Metrics().size - size;
+            const int magnitude = distance < 0 ? -distance : distance;
+            if (nearest == nullptr || magnitude < best_distance)
+            {
+                nearest = font.get();
+                best_distance = magnitude;
+            }
+        }
+    }
+    return nearest;
 }
 
 } // namespace

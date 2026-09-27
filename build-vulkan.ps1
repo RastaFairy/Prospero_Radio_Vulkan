@@ -1,6 +1,10 @@
+# Prospero Radio Vulkan - Windows launcher for the canonical WSL build.
+# Copyright (C) 2026 BlackBearReloaded
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 param(
-    [ValidateSet('packages','app','check','clean')]
-    [string]$Mode = 'packages',
+    [ValidateSet('ffpfsc','packages','app','check','clean')]
+    [string]$Mode = 'ffpfsc',
     [string]$Distro = 'Ubuntu-24.04'
 )
 
@@ -33,7 +37,7 @@ else {
     throw "Unsupported project path '$Root'. Put the project on a Windows drive such as C:\\ or D:\\ so WSL2 can build it."
 }
 
-Write-Host "==> ProsperoRadio Modernized / WSL2 $Distro / mode=$Mode"
+Write-Host "==> Prospero Radio Vulkan / WSL2 $Distro / mode=$Mode"
 Write-Host "    Windows root: $Root"
 Write-Host "    WSL root:     $WslRoot"
 Write-Host "    Linux build:  ~/.cache/prospero-radio-modernized"
@@ -42,7 +46,7 @@ Write-Host "    Linux build:  ~/.cache/prospero-radio-modernized"
 # The actual Git checkout and native PS5 build are performed on WSL's
 # Linux filesystem so Git can create locks, preserve executable bits,
 # and use normal Unix filesystem semantics.
-$command = "cd '$WslRoot' && bash ./build-vulkan.sh '$Mode'"
+$command = "cd '$WslRoot' && bash ./build.sh '$Mode'"
 & wsl.exe -d $Distro -- bash -lc $command
 if ($LASTEXITCODE -ne 0) {
     throw "WSL build failed with exit code $LASTEXITCODE."

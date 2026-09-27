@@ -110,6 +110,8 @@ definitions=()
 cxx_flags=()
 includes=()
 archives=()
+vulkan_archives=()
+extra_objects=()
 import_stubs=()
 pacbrew_packages=()
 pacbrew_includes=()
@@ -118,6 +120,8 @@ pacbrew_archives=()
 [[ -z ${APP_CXXFLAGS:-} ]] || read -r -a cxx_flags <<< "$APP_CXXFLAGS"
 [[ -z ${APP_INCLUDE_PATHS:-} ]] || read -r -a includes <<< "$APP_INCLUDE_PATHS"
 [[ -z ${APP_STATIC_ARCHIVES:-} ]] || read -r -a archives <<< "$APP_STATIC_ARCHIVES"
+[[ -z ${APP_VULKAN_ARCHIVES:-} ]] || read -r -a vulkan_archives <<< "$APP_VULKAN_ARCHIVES"
+[[ -z ${APP_EXTRA_OBJECTS:-} ]] || read -r -a extra_objects <<< "$APP_EXTRA_OBJECTS"
 [[ -z ${APP_IMPORT_STUBS:-} ]] || read -r -a import_stubs <<< "$APP_IMPORT_STUBS"
 [[ -z ${PACBREW_PACKAGES:-} ]] || read -r -a pacbrew_packages <<< "$PACBREW_PACKAGES"
 [[ -z ${PACBREW_INCLUDE_PATHS:-} ]] || read -r -a pacbrew_includes <<< "$PACBREW_INCLUDE_PATHS"
@@ -191,6 +195,65 @@ PS5_PAYLOAD_SDK="$sdk_root" sh "$root/tooling/prospero-clang18" \
     -c "$native/app_cpp_runtime.cpp" -o "$build/obj/app_cpp_runtime.o"
 
 link_inputs=("$build/obj/app_crt.o" "$build/obj/app_cpp_runtime.o" "${objects[@]}")
+# Large allocations are served by the title Direct-Memory pool
+# (tooling/native/app_cpp_runtime.cpp); the default libc heap cannot
+# grow past a few MB on this console.
+link_inputs+=("--wrap=malloc" "--wrap=calloc" "--wrap=realloc" "--wrap=free" "--wrap=posix_memalign")
+
+if (( ${#vulkan_archives[@]} > 0 )); then
+    for archive in "${vulkan_archives[@]}"; do
+        [[ $archive =~ ^[A-Za-z0-9_./+-]+(/[A-Za-z0-9_.+-]+)*\.a$ && -f $root/$archive ]] || {
+            echo "invalid Vulkan archive: $archive" >&2; exit 2;
+        }
+    done
+    # Mesa's generated NIR core is split across several archive members. The
+    # title link intentionally permits unresolved SCE imports, so do not rely on
+    # incidental reference discovery to extract these members from libpsbc_driver.
+    # Force one anchor from each generated object that exports NIR core APIs.
+    nir_link_anchors=(
+        nir_intrinsic_infos
+        nir_op_infos
+        nir_eval_const_opcode
+        nir_type_conversion_op
+        nir_opt_algebraic
+        nir_opt_algebraic_late
+        nir_opt_reassociate_for_fma
+    )
+    for symbol in "${nir_link_anchors[@]}"; do
+        link_inputs+=("--undefined=$symbol")
+    done
+    link_inputs+=(--whole-archive)
+    link_inputs+=("${vulkan_archives[@]}")
+    link_inputs+=(--no-whole-archive)
+
+    for object in "${extra_objects[@]}"; do
+        [[ $object =~ ^[A-Za-z0-9_./+-]+(/[A-Za-z0-9_.+-]+)*\.o$ && -f $root/$object ]] || {
+            echo "invalid extra Vulkan object: $object" >&2; exit 2;
+        }
+    done
+    link_inputs+=("${extra_objects[@]}")
+
+    vulkan_cxx=(
+        "$sdk_root/target/lib/libc++.a"
+        "$sdk_root/target/lib/libc++abi.a"
+        "$sdk_root/target/lib/libunwind.a"
+    )
+    for archive in "${vulkan_cxx[@]}"; do
+        [[ -f $archive ]] || {
+            echo "missing Vulkan C++ runtime archive: $archive" >&2; exit 2;
+        }
+    done
+    link_inputs+=(--start-group "${vulkan_cxx[@]}")
+    target_clang=${PS5_CLANG:-${cxx}}
+    builtins=""
+    if [[ -n $target_clang ]]; then
+        resource_dir=$("$target_clang" --print-resource-dir 2>/dev/null || true)
+        candidate="$resource_dir/lib/linux/libclang_rt.builtins-x86_64.a"
+        [[ -f $candidate ]] && builtins="$candidate"
+    fi
+    [[ -z $builtins ]] || link_inputs+=("$builtins")
+    link_inputs+=(--end-group)
+fi
 for archive in "${archives[@]}"; do
     [[ $archive =~ ^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*\.a$ && -f $root/$archive ]] || {
         echo "invalid static archive: $archive" >&2; exit 2;
@@ -215,18 +278,20 @@ for stub in "${import_stubs[@]}"; do
             soname=libSceOpusCeltDec.sprx
             link_name=libSceOpusCeltDec.so
             ;;
+        *.so|*.sprx)
+            link_inputs+=("$root/$stub")
+            continue
+            ;;
         *)
-            echo "unsupported ProsperoRadio import stub: $stub" >&2; exit 2;
+            echo "unsupported ProsperoRadio import stub: $stub" >&2; exit 2
             ;;
     esac
     mkdir -p "$build/import-stubs"
     link_object="$build/import-stubs/${link_name%.so}.o"
     link_stub="$build/import-stubs/$link_name"
-    PS5_PAYLOAD_SDK="$sdk_root" sh "$root/tooling/prospero-clang18" \
-        -std=c++20 -O2 -Wall -Wextra -fno-exceptions -fno-rtti -fPIC \
-        -c "$link_source" -o "$link_object"
+    PS5_PAYLOAD_SDK="$sdk_root" sh "$root/tooling/prospero-clang18"         -std=c++20 -O2 -Wall -Wextra -fno-exceptions -fno-rtti -fPIC         -c "$link_source" -o "$link_object"
     "$sdk_root/bin/prospero-lld" --shared -soname "$soname" -o "$link_stub" "$link_object"
-    link_imports+=("$link_stub")
+    link_inputs+=("$link_stub")
 done
 # The public SDK lacks a CommonDialog import stub, but the IME entry point
 # needs its one initializer. Keep this link-only declaration local and feed
@@ -260,11 +325,43 @@ linker_import_flags=()
 if (( ${#builder_stub_args[@]} > 0 )); then
     linker_import_flags+=(--unresolved-symbols=ignore-all)
 fi
+python3 "$root/tools/check-vulkan-link-duplicates.py" \
+    --nm "$sdk_root/bin/prospero-nm" \
+    --objects "${objects[@]}" "${extra_objects[@]}" \
+    --archives "${vulkan_archives[@]}"
+
 "$sdk_root/bin/prospero-lld" -T "$native/ps5-pie.ld" --eh-frame-hdr \
     --version-script "$native/app-symbols.map" \
     -L "$sdk_root/target/lib" -e _start -o "$build/llvm-pie.elf" "${link_inputs[@]}" \
     "${linker_import_flags[@]}" \
     --as-needed "$sdk_root"/target/lib/*.so
+
+# Audit the ordinary ELF symbol table, not the dynamic table. `-D` only sees
+# symbols participating in dynamic linking and can report internal/static
+# compiler symbols as imports even when they are fully resolved in the final
+# executable. Weak undefined Vulkan entry points are intentionally allowed.
+vk_undefined=$(
+    "$sdk_root/bin/prospero-nm" --undefined-only --format=posix "$build/llvm-pie.elf" 2>/dev/null |
+        awk '$2 == "U" && $1 ~ /^vk[A-Z]/ { print $1 }' | sort -u
+)
+if [[ -n $vk_undefined ]]; then
+    echo "Vulkan link audit: unresolved strong Vulkan symbols remain after final link:" >&2
+    printf '  %s
+' $vk_undefined >&2
+    exit 2
+fi
+
+mesa_internal_undefined=$(
+    "$sdk_root/bin/prospero-nm" --undefined-only --format=posix "$build/llvm-pie.elf" 2>/dev/null |
+        awk '$2 == "U" && $1 ~ /^nir_/ { print $1 }' | sort -u
+)
+if [[ -n $mesa_internal_undefined ]]; then
+    echo "Mesa link audit: unresolved NIR internal symbols remain after final link:" >&2
+    printf '  %s
+' $mesa_internal_undefined >&2
+    exit 2
+fi
+
 readelf_tool=$(command -v llvm-readelf-18 || command -v llvm-readelf || command -v readelf)
 for compatibility_symbol in fchown lstat; do
     if "$readelf_tool" --symbols --wide "$build/llvm-pie.elf" |

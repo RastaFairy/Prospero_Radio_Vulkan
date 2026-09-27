@@ -1,6 +1,11 @@
 // ProsperoRadio - Native PlayStation 5 radio application.
 // Copyright (C) 2026 BlackBearReloaded
 // SPDX-License-Identifier: GPL-3.0-or-later
+//
+// Physical-radio frontend (01.000.019): the seven printed buttons of the
+// cabinet are the navigation (D-pad moves the finger, Cross presses), the
+// right dial tunes, the left dial is volume. The smoked glass shows one
+// surface at a time: now playing, a station list, genres, search or settings.
 
 #pragma once
 
@@ -9,45 +14,88 @@
 
 #include <vector>
 
-namespace Rml {
+namespace Rml
+{
 class ElementDocument;
 }
 
-class RadioApp {
-public:
-    bool Initialize(Rml::ElementDocument* document);
+class RadioApp
+{
+  public:
+    bool Initialize(Rml::ElementDocument *document);
     void Poll();
-    void HandleInput(const radio_input_event_t& event);
+    void HandleInput(const radio_input_event_t &event);
     void Shutdown();
+    bool WantsQuit() const
+    {
+        return quit_requested_;
+    }
 
-private:
-    enum class View {
-        Popular,
-        Trending,
-        Voted,
-        Favorites,
-        Discover,
-        Count
+  private:
+    enum class Mode
+    {
+        Home,     // now playing + button row navigation
+        List,     // station list inside the glass (RADIO / FAVORITES buttons)
+        Genres,   // genre list inside the glass
+        Search,   // search overlay
+        Settings, // legacy panel (unreachable)
+        Aux,      // external-list entry surface
+        Barrido,  // list ingestion surface
+        Eq,       // equalizer surface
     };
 
-    static constexpr unsigned CardCount = 4;
+    enum class ListKind
+    {
+        Radio,
+        Favorites
+    };
+
+    static constexpr unsigned ButtonCount = 7;
+    static constexpr unsigned ListRows = 7;
     static constexpr unsigned InvalidStation = ~0U;
 
-    Rml::ElementDocument* document_ = nullptr;
-    std::vector<unsigned> visible_indices_;
-    unsigned card_stations_[CardCount]{};
-    unsigned visible_count_ = 0;
-    unsigned page_start_ = 0;
-    unsigned selected_slot_ = 0;
-    char pending_play_uuid_[40]{};
-    unsigned focus_ = 0;
-    unsigned search_focus_ = 0;
-    View view_ = View::Popular;
-    bool search_open_ = false;
-    bool credits_open_ = false;
+    Rml::ElementDocument *document_ = nullptr;
     bool service_started_ = false;
     bool have_last_status_ = false;
     radio_service_status_t last_status_{};
+
+    Mode mode_ = Mode::Home;
+    unsigned button_focus_ = 1; // start on RADIO
+
+    ListKind list_kind_ = ListKind::Radio;
+    unsigned list_start_ = 0;
+    unsigned list_cursor_ = 0;
+    unsigned list_total_ = 0;
+    unsigned list_indices_[ListRows]{};
+
+    unsigned genre_start_ = 0;
+    unsigned genre_cursor_ = 0;
+    unsigned genre_total_ = 0;
+
+    unsigned tuned_index_ = 0;
+
+    bool settings_open_ = false;
+    unsigned settings_focus_ = 0;
+    int poweroff_ticks_ = -1;       /* >=0 while the LCD power-off fade runs */
+    bool quit_requested_ = false;   /* set once, main loop breaks cooperatively (no _Exit) */
+    int presets_[3] = {-1, -1, -1}; /* touchpad quick presets (station idx) */
+    int preset_active_ = -1;        /* zone currently tuned from, -1 = free */
+    bool touch_hold_active_ = false;
+    bool touch_fired_ = false;
+    int touch_zone_ = 0;
+    unsigned long long touch_start_ = 0;
+    unsigned long long lb_frame_ = 0;
+    int lb_pulses_left_ = 0;
+    bool lb_on_ = false;
+    int eq_sel_ = 0;
+    int eq_preset_ = 0;
+    int theme_index_ = 0;    /* applied cabinet finish */
+    int theme_selected_ = 0; /* picker value in Settings */
+    unsigned volume_frame_ = 20;
+    unsigned tuner_state_ = 0;
+
+    bool search_open_ = false;
+    unsigned search_focus_ = 0;
     char search_query_[157]{};
     char search_edit_[157]{};
     char filter_country_[4]{};
@@ -58,31 +106,48 @@ private:
     std::vector<radio_facet_t> genre_facets_;
     std::vector<radio_facet_t> language_facets_;
 
-    void RebuildFacets();
-    void BuildVisibleList();
-    bool StationVisible(const radio_station_t& station) const;
-    void RefreshAll();
-    void RefreshCards();
-    void RefreshCard(unsigned slot);
-    void RefreshTabs();
-    void RefreshHeading();
-    void RefreshDiscover();
-    void RefreshDetail();
-    void RefreshPlayback(const radio_service_status_t& status);
-    void RefreshConnection(const radio_service_status_t& status);
-    void UpdateEqualizer(const radio_service_status_t& status);
-    void UpdateFocus();
-    void UpdateSearch();
-    void OpenSearch(unsigned filter);
+    char pending_play_uuid_[40]{};
+
+    void LoadTheme();
+    void SaveTheme() const;
+    void ApplyTheme();
+    void CycleTheme(int direction);
+    void ApplyVolumeFrame();
+    void ApplyTunerFrame();
+    void ApplyButtons();
+    void ShowScreen();
+    void PressButton(unsigned index);
+    void RefreshVolumeDisplay();
+    void SelectTheme(int direction);
+    void ApplyTheme(int index);
+    void UpdateFocusSearch();
+    void UpdateEqualizer(const radio_service_status_t &status);
+
+    void StorePreset(int zone);
+    void RecallPreset(int zone);
+    void LoadPresets();
+    void SavePresets();
+    void SaveEq();
+    void LightbarTick();
+    void RefreshEq();
+    void RefreshAuxPanel();
+    void AdjustVolume(int direction);
+    void TuneStation(int direction);
+    void PlayIndex(unsigned index);
+    void ToggleFavoriteOnTuned();
+    void BuildList();
+    void RefreshList();
+    void RefreshGenres();
+    void RefreshHome();
+    void RefreshStatus();
+    void RefreshSettings(bool refresh_favorites = true);
+    void HandleSettingsKey(radio_input_key_t key);
+    void OpenSearch();
     void CloseSearch(bool apply);
-    void OpenCredits();
-    void CloseCredits();
-    void SetView(int direction);
-    void ChangePage(int direction, unsigned focus_slot);
-    void ToggleFavorite();
-    void TogglePlayback();
-    void HandleMainKey(radio_input_key_t key);
     void HandleSearchKey(radio_input_key_t key);
     void CycleFilter(unsigned filter, int direction);
-    static void ImeResult(const char* text, void* user_data);
+    void UpdateSearch();
+    void RebuildFacets();
+
+    static void ImeResult(const char *text, void *user_data);
 };

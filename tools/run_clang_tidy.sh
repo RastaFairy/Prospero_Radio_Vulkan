@@ -21,6 +21,7 @@ zlib="$root/.deps/native/zlib/root/usr/include"
 pacbrew="$root/.deps/pacbrew/v0.40.2/sysroot/user/homebrew/include"
 app_includes=(-I"$root/include" -I"$root/vendor/ps5/sdl/include" \
     -I"$root/vendor/ps5/sdl/include/SDL2" -I"$root/vendor/ps5/rmlui/include" \
+    -I"$root/.local/vulkan/include" \
     -isystem "$pacbrew")
 
 mapfile -d '' host_sources < <(find "$root/tooling/native" -maxdepth 1 \

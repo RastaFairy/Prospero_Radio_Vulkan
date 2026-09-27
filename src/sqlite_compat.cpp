@@ -14,13 +14,6 @@ extern "C" int fchown(int descriptor, uid_t owner, gid_t group)
     return 0;
 }
 
-extern "C" struct tm *localtime_r(const time_t *timer, struct tm *result)
-{
-    (void)timer;
-    (void)result;
-    return nullptr;
-}
-
 extern "C" int lstat(const char *path, struct stat *status)
 {
     // The title sandbox rejects lstat() on /download0 with EPERM even though

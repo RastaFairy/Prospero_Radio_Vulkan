@@ -558,6 +558,8 @@ def generate_controls_assets(overlay: Path, worktree: Path, version: str) -> Non
     css.append(f".volume-frame-img {{ position: absolute; {volume_rect} }}")
     tuner_rect = rect_css(manifest["tuner"]["targetRect"])
     css.append(f".tuner-frame-img {{ position: absolute; {tuner_rect} }}")
+    css.append(".frame-img { display: block; }")
+    css.append(".btn-img { display: block; }")
     for control, info in manifest["buttons"]["controls"].items():
         css.append(
             f".btn-rect-{control.replace('_', '-')} {{ position: absolute; {rect_css(info['targetRect'])} }}"

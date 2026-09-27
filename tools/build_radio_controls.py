@@ -211,12 +211,12 @@ def add_button_focus(frame: Image.Image, active: bool = False) -> Image.Image:
     glow = Image.new("RGBA", frame.size, (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     gd.rounded_rectangle((3, 3, frame.width - 4, frame.height - 4), 10,
-                         outline=(221, 153, 76, 65), width=9)
+                         outline=(221, 153, 76, 110), width=10)
     glow = glow.filter(ImageFilter.GaussianBlur(4))
     frame = Image.alpha_composite(frame, glow)
     draw = ImageDraw.Draw(frame)
-    draw.rounded_rectangle((5, 5, frame.width - 6, frame.height - 6), 8,
-                           outline=AMBER_BRIGHT, width=3)
+    draw.rounded_rectangle((4, 4, frame.width - 5, frame.height - 5), 8,
+                           outline=AMBER_BRIGHT, width=6)
     if active:
         add_button_selected(frame)
     return frame
@@ -224,8 +224,8 @@ def add_button_focus(frame: Image.Image, active: bool = False) -> Image.Image:
 
 def add_button_selected(frame: Image.Image) -> None:
     draw = ImageDraw.Draw(frame)
-    draw.rounded_rectangle((82, frame.height - 12, frame.width - 82, frame.height - 8),
-                           2, fill=AMBER)
+    draw.rounded_rectangle((58, frame.height - 22, frame.width - 58, frame.height - 8),
+                           4, fill=AMBER)
 
 
 def make_button_frame(source: Image.Image, bounds: tuple[int, int, int, int], state: str) -> Image.Image:
@@ -240,7 +240,7 @@ def make_button_frame(source: Image.Image, bounds: tuple[int, int, int, int], st
 
     if state in ("focus", "selected_focus"):
         if state == "selected_focus":
-            frame = tint(frame, (213, 146, 72, 12))
+            frame = tint(frame, (213, 146, 72, 30))
         frame = add_button_focus(frame, active=(state == "selected_focus"))
     elif state == "pressed":
         frame = tint(frame, (0, 0, 0, 50))

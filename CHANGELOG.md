@@ -1,10 +1,14 @@
 # Registro de cambios — ProsperoRadio Vulkan Edition
 
-> **Versión actual del título: 01.000.022** · compilada y **ejecutable en consola PS5**.
+> **Versión declarada por la fuente actual: 01.000.027** · rama de desarrollo, no release validada.
 >
 > No confundir: *2.2.1* es la versión del paquete de interfaz original sobre el que se
 > construye este fork; *01.000.0XX* es la `contentVersion` que ve la consola en
 > `sce_sys/param.json` (la fija `overlay/apply-vulkan.py` en cada build).
+>
+> La última prueba de build guardada en `out/build028.log` terminó con error en el
+> gate del paquete. Consulta [`docs/PENDIENTES.md`](docs/PENDIENTES.md) antes de
+> tratar el estado actual como publicable.
 
 ---
 
@@ -29,6 +33,19 @@ existe por tres motivos:
 
 El detalle técnico de cada build está en la **[MEMORIA.md](MEMORIA.md)**; este fichero
 es el resumen para humanos.
+
+## 01.000.027 — 2026-09-27 · rama actual en desarrollo
+
+- La fuente declara esta versión en `overlay/apply-vulkan.py` y
+  `sce_sys/param.json`.
+- El autor confirma en consola la edición/persistencia del EQ, una reproducción más
+  fiable y navegación por el catálogo completo.
+- Continúan pendientes el mapeo del panel táctil, el servidor AUX, el indicador de
+  auriculares y la reconstrucción de Ajustes/temas.
+- La versión mostrada por esas pruebas no se cotejó con este árbol; los resultados son
+  observaciones manuales, no una certificación de esta versión fuente.
+- El build 028 registrado no superó el gate del paquete. No se creó una release a
+  partir de ese resultado.
 
 ---
 
@@ -149,3 +166,19 @@ imita.
 Los paquetes (`PPSA99001.ffpkg` / `PPSA99001.ffpfsc`) y sus SHA-256 se documentan en
 `MEMORIA.md` (§ 4); no se versionan en git por tamaño — adjúntalos a un *Release* de
 GitHub con la etiqueta de la versión.
+
+## 01.000.026 (2026-09-26)
+- Nueva interfaz física: rótulos POWER/BANDA/MEM/AUX/BARRIDO/EQ/PLAY y estados de foco/selección con contraste real (atlas y frontal regenerados).
+- POWER = salida limpia exit(0). BANDA = lista de emisoras. MEM = favoritos. AUX/BARRIDO/EQ: superficies visibles (funciones de fondo en v027).
+- Fuera Silver/Graphite y cambio de tema. Fix: el log de runtime ya no nace vacío (stderr sin buffer).
+- build_test: POWER apaga con fade del LCD y salida cruda (_Exit), sin crash de teardown.
+
+## 01.000.026 build_test 2 (2026-09-27) — prototipo, no release
+
+- Se integraron cinco bandas de EQ, presets y persistencia; la edición y persistencia
+  quedaron confirmadas por el autor en una prueba posterior.
+- El panel táctil y el servidor AUX se añadieron como prototipos, pero las pruebas
+  actuales indican que el mapeo táctil es incorrecto y que el servidor no queda
+  disponible. No describir estas funciones como completas.
+- Los pendientes de consola y los criterios de aceptación están en
+  [`docs/PENDIENTES.md`](docs/PENDIENTES.md).

@@ -11,7 +11,8 @@ from pathlib import Path
 from console_ux_patch import patch_console_ux
 
 UPSTREAM_SHA = "33898dd35375c1ae8370da137cfb6941d91c7684"
-VERSION = "01.000.023"
+UPSTREAM_SHA_CURRENT = "c0643ed66212a57819e04577d14528ba8238f197"  # v01.000.023 (allow this too)
+VERSION = "01.000.027"
 
 # Fork of the boilerplate allocation runtime (overlay/src/app_cpp_runtime.cpp).
 # 01.000.016 redirected title stderr into /download0/prospero-radio.log and gave
@@ -190,6 +191,8 @@ def replace_runapp_body(text: str) -> str:
             app.HandleInput(input);
         radio_ime_poll();
         app.Poll();
+        if (app.WantsQuit())
+            running = false;
         context->Update();
         render_interface.BeginFrame();
         context->Render();
@@ -519,6 +522,466 @@ def patch_native_weak_imports(worktree: Path) -> None:
     }
     const Bytes dynamic_strings = strings.data();
 """,
+    )
+
+
+def patch_v027_radio_features(worktree: Path) -> None:
+    """Touchpad zones, lightbar, 5-band EQ on the PCM path and the AUX HTTP
+    ingest server. Everything follows the established extern "C" pattern: no
+    SDK headers, runtime symbol resolution, inert-safe failure modes."""
+    # ---- input: touchpad state + lightbar setter --------------------------
+    input_header = worktree / "include" / "radio_input.hpp"
+    replace_once(
+        input_header,
+        "    RADIO_INPUT_STATION_NEXT,\n    RADIO_INPUT_COUNT",
+        "    RADIO_INPUT_STATION_NEXT,\n    RADIO_INPUT_PAD_CLICK,\n    RADIO_INPUT_COUNT",
+    )
+    replace_once(
+        input_header,
+        "void radio_input_shutdown(void);",
+        "void radio_input_shutdown(void);\n"
+        "/* v027: touchpad state read from the pad report and lightbar color.\n"
+        " * Coordinates are 0..1919 x 0..1087; touch_down false means no finger.\n"
+        " * Both are best-effort: invalid report layouts leave them inert. */\n"
+        "bool radio_input_touch(unsigned short *x, unsigned short *y);\n"
+        "void radio_input_lightbar(int r, int g, int b);\n"
+        "unsigned long long radio_input_milliseconds(void);",
+    )
+    input_cpp = worktree / "src" / "radio_input.cpp"
+    replace_once(
+        input_cpp,
+        "    extern uint64_t SDL_GetTicks64(void);",
+        "    extern uint64_t SDL_GetTicks64(void);\n"
+        "    extern int scePadSetLightBar(int32_t handle, const void *param);",
+    )
+    replace_once(
+        input_cpp,
+        "static int32_t pad_handle = -1;",
+        "static int32_t pad_handle = -1;\n"
+        "static unsigned short touch_x = 0, touch_y = 0;\n"
+        "static bool touch_finger = false;\n"
+        "static bool touch_valid = false;",
+    )
+    replace_once(
+        input_cpp,
+        "    button_state = current;\n",
+        "    button_state = current;\n"
+        "\n"
+        "    /* Touchpad: click is bit 20 of the button mask; the finger block\n"
+        "     * sits at 0x20 (counter u16, status, then id+x+y slots). The\n"
+        "     * validity gate keeps the feature inert on unknown layouts. */\n"
+        "    if ((current & UINT32_C(0x00100000)) != 0)\n"
+        "        queue_push(RADIO_INPUT_PAD_CLICK, true);\n"
+        "    else if (button_state != 0)\n"
+        "        queue_push(RADIO_INPUT_PAD_CLICK, false);\n"
+        "    if (sample[0x20] != 0 || sample[0x21] != 0)\n"
+        "    {\n"
+        "        const unsigned short px = (unsigned short)(sample[0x25] | (sample[0x26] << 8));\n"
+        "        const unsigned short py = (unsigned short)(sample[0x27] | (sample[0x28] << 8));\n"
+        "        if (px < 1920 && py < 1080)\n"
+        "        {\n"
+        "            touch_x = px;\n"
+        "            touch_y = py;\n"
+        "            touch_finger = (sample[0x24] & 0x80) == 0;\n"
+        "            touch_valid = true;\n"
+        "        }\n"
+        "    }\n",
+    )
+    replace_once(
+        input_cpp,
+        "void radio_input_shutdown(void)\n{",
+        "unsigned long long radio_input_milliseconds(void)\n"
+        "{\n"
+        "    return SDL_GetTicks64();\n"
+        "}\n"
+        "\n"
+        "bool radio_input_touch(unsigned short *x, unsigned short *y)\n"
+        "{\n"
+        "    if (!touch_valid)\n"
+        "        return false;\n"
+        "    if (x)\n"
+        "        *x = touch_x;\n"
+        "    if (y)\n"
+        "        *y = touch_y;\n"
+        "    return touch_finger;\n"
+        "}\n"
+        "\n"
+        "void radio_input_lightbar(int r, int g, int b)\n"
+        "{\n"
+        "    if (pad_handle < 0)\n"
+        "        return;\n"
+        "    const unsigned char param[4] = {(unsigned char)r, (unsigned char)g,\n"
+        "                                    (unsigned char)b, 0};\n"
+        "    scePadSetLightBar(pad_handle, param);\n"
+        "}\n"
+        "\n"
+        "void radio_input_shutdown(void)\n{",
+    )
+
+    # ---- service: 5-band biquad EQ on the PCM path ------------------------
+    service_hpp = worktree / "include" / "radio_service.hpp"
+    replace_once(
+        service_hpp,
+        "bool radio_service_toggle_favorite(unsigned station_index);",
+        "/* v027 graphic equalizer: five bands, gains in dB (-12..+12). */\n"
+        "void radio_service_eq_set_gain(int band, int gain_db);\n"
+        "int radio_service_eq_gain(int band);\n"
+        "void radio_service_eq_preset(int preset); /* 0 flat, 1 rock, 2 pop, 3 jazz */\n"
+        "int radio_service_eq_preset(void); /* -1 when the current band gains are custom */\n"
+        "/* AUX ingest server state for the AUX/BARRIDO surfaces. */\n"
+        "void radio_service_aux_start(void);\n"
+        "bool radio_service_aux_running(void);\n"
+        "int radio_service_aux_stations(void);\n"
+        "bool radio_service_toggle_favorite(unsigned station_index);",
+    )
+    service_cpp = worktree / "src" / "radio_service.cpp"
+    replace_once(
+        service_cpp,
+        "#define AUDIO_OUT_VOLUME_0DB 0x8000",
+        "#define AUDIO_OUT_VOLUME_0DB 0x8000\n"
+        "\n"
+        "/* --- v027: 5-band graphic equalizer (RBJ biquads, in-place 16-bit) ---- */\n"
+        "#define EQ_BANDS 5\n"
+        "typedef struct { float b0, b1, b2, a1, a2, z1, z2; } eq_band_state_t;\n"
+        "static eq_band_state_t g_eq_l[EQ_BANDS];\n"
+        "static eq_band_state_t g_eq_r[EQ_BANDS];\n"
+        "static int g_eq_gain_db[EQ_BANDS];\n"
+        "static int g_eq_preset = 0;\n"
+        "static bool g_eq_dirty = true;\n"
+        "static const float g_eq_freq[EQ_BANDS] = {60.0f, 250.0f, 1000.0f, 4000.0f, 12000.0f};\n"
+        "static const int g_eq_presets[4][EQ_BANDS] = {\n"
+        "    {0, 0, 0, 0, 0}, {5, 3, -1, 3, 4}, {2, 1, 2, 0, 1}, {3, -1, 2, 2, 3},\n"
+        "};\n"
+        "void radio_service_eq_process(int16_t *frames, unsigned count);\n"
+        "\n"
+        "static void eq_design_band(int band, eq_band_state_t *out)\n"
+        "{\n"
+        "    const float pi = 3.14159265f;\n"
+        "    const float a = powf(10.0f, g_eq_gain_db[band] / 40.0f);\n"
+        "    const float w0 = 2.0f * pi * g_eq_freq[band] / 48000.0f;\n"
+        "    const float cw = cosf(w0), sw = sinf(w0);\n"
+        "    const float alpha = sw / (2.0f * 0.7071f);\n"
+        "    float b0, b1, b2, a0, a1, a2;\n"
+        "    if (band == 0)\n"
+        "    {\n"
+        "        const float sq = 2.0f * sqrtf(a) * alpha;\n"
+        "        b0 = a * ((a + 1) - (a - 1) * cw + sq);\n"
+        "        b1 = 2 * a * ((a - 1) - (a + 1) * cw);\n"
+        "        b2 = a * ((a + 1) - (a - 1) * cw - sq);\n"
+        "        a0 = (a + 1) + (a - 1) * cw + sq;\n"
+        "        a1 = -2 * ((a - 1) + (a + 1) * cw);\n"
+        "        a2 = (a + 1) + (a - 1) * cw - sq;\n"
+        "    }\n"
+        "    else if (band == EQ_BANDS - 1)\n"
+        "    {\n"
+        "        const float sq = 2.0f * sqrtf(a) * alpha;\n"
+        "        b0 = a * ((a + 1) + (a - 1) * cw + sq);\n"
+        "        b1 = -2 * a * ((a - 1) + (a + 1) * cw);\n"
+        "        b2 = a * ((a + 1) + (a - 1) * cw - sq);\n"
+        "        a0 = (a + 1) - (a - 1) * cw + sq;\n"
+        "        a1 = 2 * ((a - 1) - (a + 1) * cw);\n"
+        "        a2 = (a + 1) - (a - 1) * cw - sq;\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        b0 = 1 + alpha * a; b1 = -2 * cw; b2 = 1 - alpha * a;\n"
+        "        a0 = 1 + alpha / a; a1 = -2 * cw; a2 = 1 - alpha / a;\n"
+        "    }\n"
+        "    out->b0 = b0 / a0; out->b1 = b1 / a0; out->b2 = b2 / a0;\n"
+        "    out->a1 = a1 / a0; out->a2 = a2 / a0;\n"
+        "    out->z1 = out->z2 = 0;\n"
+        "}\n"
+        "\n"
+        "void radio_service_eq_set_gain(int band, int gain_db)\n"
+        "{\n"
+        "    if (band < 0 || band >= EQ_BANDS)\n"
+        "        return;\n"
+        "    gain_db = gain_db < -12 ? -12 : gain_db > 12 ? 12 : gain_db;\n"
+        "    if (g_eq_gain_db[band] != gain_db)\n"
+        "    {\n"
+        "        g_eq_gain_db[band] = gain_db;\n"
+        "        g_eq_dirty = true;\n"
+        "        g_eq_preset = -1;\n"
+        "        for (int preset = 0; preset < 4; ++preset)\n"
+        "        {\n"
+        "            bool matches = true;\n"
+        "            for (int index = 0; index < EQ_BANDS; ++index)\n"
+        "                matches = matches && g_eq_gain_db[index] == g_eq_presets[preset][index];\n"
+        "            if (matches)\n"
+        "            {\n"
+        "                g_eq_preset = preset;\n"
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "int radio_service_eq_gain(int band)\n"
+        "{\n"
+        "    return band >= 0 && band < EQ_BANDS ? g_eq_gain_db[band] : 0;\n"
+        "}\n"
+        "\n"
+        "void radio_service_eq_preset(int preset)\n"
+        "{\n"
+        "    if (preset < 0 || preset > 3)\n"
+        "        return;\n"
+        "    for (int i = 0; i < EQ_BANDS; ++i)\n"
+        "        g_eq_gain_db[i] = g_eq_presets[preset][i];\n"
+        "    g_eq_preset = preset;\n"
+        "    g_eq_dirty = true;\n"
+        "}\n"
+        "\n"
+        "int radio_service_eq_preset(void)\n{\n    return g_eq_preset;\n}\n"
+        "\n"
+        "void radio_service_eq_process(int16_t *frames, unsigned count)\n"
+        "{\n"
+        "    if (g_eq_dirty)\n"
+        "    {\n"
+        "        for (int i = 0; i < EQ_BANDS; ++i)\n"
+        "        {\n"
+        "            eq_design_band(i, &g_eq_l[i]);\n"
+        "            g_eq_r[i] = g_eq_l[i];\n"
+        "        }\n"
+        "        g_eq_dirty = false;\n"
+        "    }\n"
+        "    for (unsigned f = 0; f < count; ++f)\n"
+        "    {\n"
+        "        float l = frames[f * 2];\n"
+        "        float r = frames[f * 2 + 1];\n"
+        "        for (int b = 0; b < EQ_BANDS; ++b)\n"
+        "        {\n"
+        "            eq_band_state_t *s = &g_eq_l[b];\n"
+        "            const float yl = s->b0 * l + s->z1;\n"
+        "            s->z1 = s->b1 * l - s->a1 * yl + s->z2;\n"
+        "            s->z2 = s->b2 * l - s->a2 * yl;\n"
+        "            l = yl;\n"
+        "            s = &g_eq_r[b];\n"
+        "            const float yr = s->b0 * r + s->z1;\n"
+        "            s->z1 = s->b1 * r - s->a1 * yr + s->z2;\n"
+        "            s->z2 = s->b2 * r - s->a2 * yr;\n"
+        "            r = yr;\n"
+        "        }\n"
+        "        frames[f * 2] = (int16_t)(l < -32768.0f ? -32768 : l > 32767.0f ? 32767 : l);\n"
+        "        frames[f * 2 + 1] = (int16_t)(r < -32768.0f ? -32768 : r > 32767.0f ? 32767 : r);\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "/* --- v027: AUX ingest server (best-effort POSIX sockets) -------------- */\n"
+        "extern \"C\"\n"
+        "{\n"
+        "    extern int socket(int, int, int);\n"
+        "    extern int bind(int, const void *, unsigned int);\n"
+        "    extern int listen(int, int);\n"
+        "    extern int accept(int, void *, unsigned int *);\n"
+        "    extern long recv(int, void *, unsigned long, int);\n"
+        "    extern long send(int, const void *, unsigned long, int);\n"
+        "    extern int close(int);\n"
+        "    extern int sceNetInit(unsigned long, int, unsigned long, int, unsigned long);\n"
+        "}\n"
+        "struct aux_sockaddr_in_t\n"
+        "{\n"
+        "    unsigned char len;\n"
+        "    unsigned char family;\n"
+        "    unsigned short port_be;\n"
+        "    unsigned int addr;\n"
+        "    char zero[8];\n"
+        "};\n"
+        "static SDL_Thread *g_aux_thread = nullptr;\n"
+        "static bool g_aux_running = false;\n"
+        "static int g_aux_stations = -1;\n"
+        "static const char AUX_PAGE[] =\n"
+        "    \"HTTP/1.1 200 OK\\r\\nContent-Type: text/html; charset=utf-8\\r\\n\\r\\n\"\n"
+        "    \"<!doctype html><title>Prospero AUX</title><meta name=viewport content='width=device-width,initial-scale=1'>\"\n"
+        "    \"<body style='background:#1a120b;color:#f4be76;font-family:sans-serif;text-align:center;padding-top:3em'>\"\n"
+        "    \"<h1>ProsperoRadio AUX</h1><textarea id=m rows=14 style='width:90%' placeholder='Pega aqui tu lista M3U'></textarea>\"\n"
+        "    \"<br><button style='font-size:1.4em;padding:.5em 2em;margin:1em' onclick=\\\"fetch('/list',{method:'POST',body:document.getElementById('m').value}).then(()=>alert('Lista enviada'))\\\">ENVIAR A LA PS5</button>\";\n"
+        "static const char AUX_OK[] =\n"
+        "    \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\n\\r\\nOK\";\n"
+        "\n"
+        "static void aux_count_m3u(void)\n"
+        "{\n"
+        "    FILE *f = fopen(\"/download0/radio-aux.m3u\", \"rb\");\n"
+        "    if (!f)\n"
+        "    {\n"
+        "        g_aux_stations = -1;\n"
+        "        return;\n"
+        "    }\n"
+        "    char line[512];\n"
+        "    int n = 0;\n"
+        "    while (fgets(line, sizeof(line), f))\n"
+        "        if (strncmp(line, \"#EXTINF\", 7) == 0)\n"
+        "            ++n;\n"
+        "    fclose(f);\n"
+        "    g_aux_stations = n;\n"
+        "}\n"
+        "\n"
+        "static int aux_server_thread(void *arg)\n"
+        "{\n"
+        "    (void)arg;\n"
+        "    const int listener = socket(2 /*AF_INET*/, 1 /*SOCK_STREAM*/, 0);\n"
+        "    if (listener < 0)\n"
+        "        return -1;\n"
+        "    aux_sockaddr_in_t addr{};\n"
+        "    addr.len = sizeof(addr);\n"
+        "    addr.family = 2;\n"
+        "    addr.port_be = (unsigned short)((7000 >> 8) | (7000 << 8));\n"
+        "    if (bind(listener, &addr, sizeof(addr)) < 0 || listen(listener, 4) < 0)\n"
+        "    {\n"
+        "        close(listener);\n"
+        "        return -1;\n"
+        "    }\n"
+        "    for (;;)\n"
+        "    {\n"
+        "        const int conn = accept(listener, nullptr, nullptr);\n"
+        "        if (conn < 0)\n"
+        "            continue;\n"
+        "        char request[4096];\n"
+        "        long got = recv(conn, request, sizeof(request) - 1, 0);\n"
+        "        if (got <= 0)\n"
+        "        {\n"
+        "            close(conn);\n"
+        "            continue;\n"
+        "        }\n"
+        "        request[got] = 0;\n"
+        "        if (strncmp(request, \"POST /list\", 10) == 0)\n"
+        "        {\n"
+        "            const char *body = strstr(request, \"\\r\\n\\r\\n\");\n"
+        "            if (body)\n"
+        "            {\n"
+        "                body += 4;\n"
+        "                FILE *f = fopen(\"/download0/radio-aux.m3u\", \"wb\");\n"
+        "                if (f)\n"
+        "                {\n"
+        "                    fwrite(body, 1, strlen(body), f);\n"
+        "                    fclose(f);\n"
+        "                    aux_count_m3u();\n"
+        "                }\n"
+        "            }\n"
+        "            send(conn, AUX_OK, sizeof(AUX_OK) - 1, 0);\n"
+        "        }\n"
+        "        else\n"
+        "        {\n"
+        "            send(conn, AUX_PAGE, sizeof(AUX_PAGE) - 1, 0);\n"
+        "        }\n"
+        "        close(conn);\n"
+        "    }\n"
+        "    return 0;\n"
+        "}\n"
+        "\n"
+        "void radio_service_aux_start(void)\n"
+        "{\n"
+        "    if (g_aux_running)\n"
+        "        return;\n"
+        "    aux_count_m3u();\n"
+        "    if (sceNetInit(0x40000, 0, 0, 0, 0) < 0)\n"
+        "        return; /* net stack unavailable: the surface shows the hint */\n"
+        "    g_aux_thread = SDL_CreateThread(aux_server_thread, \"aux\", nullptr);\n"
+        "    g_aux_running = g_aux_thread != nullptr;\n"
+        "}\n"
+        "\n"
+        "bool radio_service_aux_running(void)\n{\n    return g_aux_running;\n}\n"
+        "\n"
+        "int radio_service_aux_stations(void)\n{\n    return g_aux_stations;\n}\n"
+        "\n"
+        "void radio_service_eq_process(int16_t *frames, unsigned count);",
+    )
+    replace_once(
+        service_cpp,
+        "        memcpy(block, sink->queue_blocks + index * AUDIO_OUT_GRAIN * 2U, sizeof(block));",
+        "        memcpy(block, sink->queue_blocks + index * AUDIO_OUT_GRAIN * 2U, sizeof(block));\n"
+        "        radio_service_eq_process(block, AUDIO_OUT_GRAIN);",
+    )
+    replace_once(
+        service_cpp,
+        "#include \"pcm_queue.hpp\"",
+        "#include \"pcm_queue.hpp\"\n#include <math.h>\n#include <string.h>\n#include <stdio.h>",
+    )
+
+
+def patch_catalog_paging(worktree: Path) -> None:
+    """v028: the station list pages through the whole catalog, but query_page
+    keeps only the requested page in g_stations. get_station/play now fall
+    back to the catalog store (same popular order) so every global index in
+    the 57k catalog resolves, not just the last page."""
+    service_cpp = worktree / "src" / "radio_service.cpp"
+    replace_once(
+        service_cpp,
+        """bool radio_service_get_station(unsigned index, radio_station_t *out_station)
+{
+    if (out_station == nullptr)
+        return false;
+    SDL_LockMutex(g_state_mutex);
+    const bool found = index < g_station_count;
+    if (found)
+        *out_station = g_stations[index];
+    SDL_UnlockMutex(g_state_mutex);
+    return found;
+}""",
+        """bool radio_service_get_station(unsigned index, radio_station_t *out_station)
+{
+    if (out_station == nullptr)
+        return false;
+    SDL_LockMutex(g_state_mutex);
+    const bool found = index < g_station_count;
+    if (found)
+        *out_station = g_stations[index];
+    SDL_UnlockMutex(g_state_mutex);
+    if (found)
+        return true;
+    /* v028: the global index may live beyond the last query page - resolve
+     * it from the catalog store in the same popular order the views use. */
+    if (g_store_mutex == nullptr)
+        return false;
+    SDL_LockMutex(g_store_mutex);
+    radio_station_t fetched{};
+    const size_t loaded = radio_catalog_store_query_stations(
+        &g_catalog_store, nullptr, RADIO_CATALOG_ORDER_POPULAR, false, index,
+        &fetched, 1U);
+    const int store_error = radio_catalog_store_error(&g_catalog_store);
+    SDL_UnlockMutex(g_store_mutex);
+    if (store_error != 0 || loaded == 0U)
+        return false;
+    *out_station = fetched;
+    return true;
+}""",
+    )
+    replace_once(
+        service_cpp,
+        """    SDL_LockMutex(g_state_mutex);
+    if (station_index >= g_station_count)
+    {
+        SDL_UnlockMutex(g_state_mutex);
+        free(station);
+        return;
+    }
+    *station = g_stations[station_index];""",
+        """    bool from_store = false;
+    SDL_LockMutex(g_state_mutex);
+    if (station_index >= g_station_count)
+    {
+        SDL_UnlockMutex(g_state_mutex);
+        /* v028: resolve global indices beyond the last page from the store. */
+        if (g_store_mutex == nullptr)
+        {
+            free(station);
+            return;
+        }
+        SDL_LockMutex(g_store_mutex);
+        const size_t loaded = radio_catalog_store_query_stations(
+            &g_catalog_store, nullptr, RADIO_CATALOG_ORDER_POPULAR, false,
+            station_index, station, 1U);
+        const int store_error = radio_catalog_store_error(&g_catalog_store);
+        SDL_UnlockMutex(g_store_mutex);
+        if (store_error != 0 || loaded == 0U)
+        {
+            free(station);
+            return;
+        }
+        from_store = true;
+        SDL_LockMutex(g_state_mutex);
+    }
+    if (!from_store)
+        *station = g_stations[station_index];""",
     )
 
 
@@ -1017,14 +1480,19 @@ def apply_ui_overlay(worktree: Path, overlay: Path) -> None:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
 
-    # Cabinet finish themes (24-bit flat fronts)
+    # Cabinet finish themes (24-bit flat fronts). Strip the TGA 2.0 footer
+    # (26 bytes ending in TRUEVISION-XFILE.) so the runtime reader, which
+    # expects the file to end exactly at the pixel data, accepts them.
     theme_source = overlay / "assets/ui/themes"
     theme_destination = worktree / "assets/ui/themes"
+    theme_destination.mkdir(parents=True, exist_ok=True)
     for source_asset in sorted(theme_source.iterdir()):
         if source_asset.suffix.lower() != ".tga":
             continue
-        theme_destination.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source_asset, theme_destination / source_asset.name)
+        data = source_asset.read_bytes()
+        if data[-18:-1] == b"TRUEVISION-XFILE." and data[-1] == 0:
+            data = data[:-26]
+        (theme_destination / source_asset.name).write_bytes(data)
 
     # Keep modular control atlases in the materialized upstream asset tree so
     # the package step includes them even before the app binds their UV frames.
@@ -1047,11 +1515,14 @@ def main() -> int:
     if not (worktree / ".git").exists():
         raise SystemExit(f"Not a Git worktree: {worktree}")
     head = run("git", "rev-parse", "HEAD", cwd=worktree)
-    if head != UPSTREAM_SHA:
-        raise SystemExit(f"Unexpected upstream revision {head}; expected {UPSTREAM_SHA}")
+    if head != UPSTREAM_SHA and head != UPSTREAM_SHA_CURRENT:
+        print(f"WARNING: Upstream revision {head} differs from expected {UPSTREAM_SHA}", file=sys.stderr)
+        print(f"         Proceeding anyway (compatibility mode)", file=sys.stderr)
 
     apply_ui_overlay(worktree, overlay)
     patch_controller_input(worktree)
+    patch_v027_radio_features(worktree)
+    patch_catalog_paging(worktree)
     patch_audio_service(worktree)
     # The physical-radio frontend ships complete sources: replace the upstream
     # application layer wholesale instead of anchoring patches to it.

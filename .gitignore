@@ -9,6 +9,7 @@ out/*
 # --- Local workspaces and recovery snapshots ---
 .workspace/
 recovery/
+.deps/
 
 # --- Detailed machine history: summarized in MEMORIA.md, local-only ---
 BUILD-FIX*.md
@@ -23,3 +24,23 @@ CRASH-DIAGNOSIS-2026-09-25.md
 Administrador PowerShell.txt
 __pycache__/
 *.pyc
+
+# --- Local-only audit notes and command captures (keep the original files locally) ---
+/AUDIT_COMPLETE.txt
+/AUDITORIA_FALLOS_MEMORIA.md
+/BASES-UX-026.md
+/COMPILATION_SAMPLED_REPORT_1.md
+/CORRECCIONES_FINALES.md
+/HISTORICO.md
+/INDICE_MEMORIA.md
+/MEMORIA_CHANGES_APPLIED.md
+/MEMORIA_COMPILATION_AUDIT.md
+/REPORTE_FINAL.txt
+/RESUMEN_EJECUTIVO.md
+/STATUS_FINAL.md
+/apply_vulkan_output.txt
+/build_output.log
+/compile_and_capture.sh
+/find_brace_error.py
+/tools/pre_compile_check.py
+/tools/static_analysis.py

@@ -145,7 +145,7 @@ button {
 #now-panel { position: absolute; left: 96px; top: 648px; width: 1722px; height: 180px; overflow: hidden; border: 1px #1f313a; background-color: #0b171e; }
 .now-art { position: absolute; left: 22px; top: 22px; width: 136px; height: 136px; overflow: hidden; background-color: #102a32; }
 #now-badge { position: absolute; left: 0px; top: 26px; width: 136px; height: 40px; color: #eef3f5; font-size: 28px; line-height: 38px; text-align: center; }
-.eq-bar { position: absolute; top: 108px; width: 10px; height: 14px; background-color: #29454e; }
+.eq-bar { bottom: 0px; position: absolute; width: 10px; height: 14px; background-color: #29454e; }
 .eq-0 { left: 20px; } .eq-1 { left: 42px; } .eq-2 { left: 64px; } .eq-3 { left: 86px; } .eq-4 { left: 108px; }
 .now-heading { position: absolute; left: 188px; top: 24px; width: 220px; height: 28px; color: #69d4c0; font-size: 20px; line-height: 26px; }
 #now-name { position: absolute; left: 188px; top: 56px; width: 820px; height: 38px; overflow: hidden; color: #eef3f5; font-size: 32px; line-height: 36px; text-overflow: ellipsis; white-space: nowrap; }
@@ -167,7 +167,6 @@ button {
 #connection-label { position: absolute; left: 1590px; top: 28px; width: 240px; height: 28px; overflow: hidden; color: #69d4c0; font-size: 20px; line-height: 26px; text-overflow: ellipsis; white-space: nowrap; }
 
 .overlay { position: absolute; left: 0px; top: 0px; width: 1920px; height: 1080px; overflow: hidden; background-color: #071018; }
-.search-panel { position: absolute; left: 220px; top: 150px; width: 1480px; height: 720px; overflow: hidden; border: 1px #2c4a54; background-color: #0b171e; }
 .overlay-title { position: absolute; left: 40px; top: 32px; width: 600px; height: 40px; color: #eef3f5; font-size: 32px; line-height: 38px; }
 .overlay-subtitle { position: absolute; left: 40px; top: 72px; width: 920px; height: 30px; color: #84959e; font-size: 20px; line-height: 28px; }
 #search-query { position: absolute; left: 40px; top: 130px; width: 1400px; height: 56px; border: 1px #2a414b; background-color: #071018; color: #aebbc1; }
@@ -611,14 +610,6 @@ body {
 #credits-overlay {
     background-color: transparent;
 }
-.search-panel {
-    left: 535px;
-    top: 378px;
-    width: 850px;
-    height: 242px;
-    border: 2px #8a6a3c;
-    background-color: #2b1d13;
-}
 .overlay-title {
     left: 20px;
     top: 11px;
@@ -758,16 +749,6 @@ body {
     background-color: transparent;
     z-index: 40;
 }
-.settings-panel {
-    position: absolute;
-    left: 535px;
-    top: 378px;
-    width: 850px;
-    height: 272px;
-    overflow: hidden;
-    border: 2px #8a6a3c;
-    background-color: #2b1d13;
-}
 .settings-kicker {
     position: absolute;
     left: 20px;
@@ -815,10 +796,10 @@ body {
 }
 .settings-theme-row {
     position: absolute;
-    left: 20px;
-    top: 72px;
+    left: 18px;
+    top: 58px;
     width: 812px;
-    height: 42px;
+    height: 38px;
     border: 1px #68492d;
     background-color: #382719;
 }
@@ -859,10 +840,10 @@ body {
 }
 .settings-volume-row {
     position: absolute;
-    left: 20px;
-    top: 122px;
+    left: 18px;
+    top: 102px;
     width: 812px;
-    height: 42px;
+    height: 38px;
     border: 1px #68492d;
     background-color: #382719;
 }
@@ -891,7 +872,7 @@ body {
     position: absolute;
     left: 270px;
     top: 14px;
-    width: 330px;
+    width: 260px;
     height: 10px;
     border: 1px #68492d;
     background-color: #1c120b;
@@ -906,7 +887,7 @@ body {
 }
 .settings-volume-help {
     position: absolute;
-    left: 560px;
+    left: 540px;
     top: 9px;
     width: 190px;
     height: 23px;
@@ -917,9 +898,9 @@ body {
 }
 .settings-action {
     position: absolute;
-    top: 172px;
+    top: 148px;
     width: 394px;
-    height: 46px;
+    height: 40px;
     border: 1px #68492d;
     background-color: #382719;
     color: #f4be76;
@@ -938,7 +919,7 @@ body {
 }
 .settings-action-detail {
     position: absolute;
-    left: 230px;
+    right: 10px;
     top: 4px;
     width: 128px;
     height: 21px;
@@ -955,10 +936,10 @@ body {
 }
 .settings-controls {
     position: absolute;
-    left: 20px;
-    top: 228px;
+    left: 18px;
+    top: 194px;
     width: 812px;
-    height: 48px;
+    height: 22px;
     overflow: hidden;
     color: #bc7e39;
     font-size: 15px;
@@ -1010,7 +991,7 @@ body {
     top: 0px;
     width: 1920px;
     height: 1080px;
-    z-index: 0;
+    z-index: 1; /* above the KTX hybrid so they cover it when loaded */
 }
 .backdrop-hidden { visibility: hidden; }
 #controls-layer {
@@ -1026,8 +1007,7 @@ body {
 
 .hidden { visibility: hidden; }
 
-/* --- Physical-radio display (01.000.020) ---------------------------------
-   One glass surface at a time inside the manifest content rect. */
+/* --- Physical-radio display: one glass surface at a time inside the manifest content rect. --- */
 #display {
     position: absolute;
     left: 516px;
@@ -1124,29 +1104,74 @@ body {
     position: absolute; left: 770px; top: 2px; width: 90px; height: 21px;
     color: #bc7e39; font-size: 15px; line-height: 21px; text-align: right;
 }
-#search-panel {
+.search-query-button { position: absolute; left: 20px; top: 70px; width: 812px; height: 42px; }
+.search-query-label {
+    position: absolute; left: 12px; top: 4px; width: 780px; height: 30px;
+    color: #f4be76; font-size: 17px; line-height: 26px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+#filter-1 { position: absolute; left: 20px; top: 122px; width: 394px; height: 46px; }
+#filter-3 { position: absolute; left: 438px; top: 122px; width: 394px; height: 46px; }
+#search-apply { position: absolute; left: 20px; top: 178px; width: 812px; height: 42px; }
+.search-query-button { position: absolute; left: 20px; top: 70px; width: 812px; height: 42px; }
+.search-query-label {
+    position: absolute; left: 12px; top: 4px; width: 780px; height: 30px;
+    color: #f4be76; font-size: 17px; line-height: 26px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+#filter-1 { position: absolute; left: 20px; top: 122px; width: 394px; height: 46px; }
+#filter-3 { position: absolute; left: 438px; top: 122px; width: 394px; height: 46px; }
+#search-apply { position: absolute; left: 20px; top: 178px; width: 812px; height: 42px; }
+
+/* Glass surfaces: exactly one visible at a time (01.000.025). */
+#screen-home, #screen-list, #screen-genres,
+#settings-panel, #search-panel {
+    position: absolute; left: 0px; top: 0px;
+    width: 888px; height: 228px; overflow: hidden;
+    z-index: 10;
+}
+#settings-panel {
+    left: 8px; top: 4px; width: 872px; height: 220px;
+    border: 2px #8a6a3c; border-radius: 10px;
+    background-color: #2b1d13;
+}
+#search-panel { background-color: transparent; }
+.hidden { visibility: hidden; }
+
+#screen-aux, #screen-barrido, #screen-eq {
     position: absolute; left: 0px; top: 0px; width: 888px; height: 228px;
-    background-color: transparent;
 }
-.search-query-button { position: absolute; left: 20px; top: 70px; width: 812px; height: 42px; }
-.search-query-label {
-    position: absolute; left: 12px; top: 4px; width: 780px; height: 30px;
-    color: #f4be76; font-size: 17px; line-height: 26px;
-    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+.panel-kicker {
+    position: absolute; left: 8px; top: 4px; width: 700px; height: 22px;
+    color: #bc7e39; font-size: 15px; line-height: 20px;
 }
-#filter-1 { position: absolute; left: 20px; top: 122px; width: 394px; height: 46px; }
-#filter-3 { position: absolute; left: 438px; top: 122px; width: 394px; height: 46px; }
-#search-apply { position: absolute; left: 20px; top: 178px; width: 812px; height: 42px; }
-#search-panel {
-    position: absolute; left: 0px; top: 0px; width: 100%; height: 100%;
-    background-color: transparent;
+.panel-big {
+    position: absolute; left: 8px; top: 62px; width: 872px; height: 44px;
+    color: #f4be76; font-size: 30px; line-height: 44px;
 }
-.search-query-button { position: absolute; left: 20px; top: 70px; width: 812px; height: 42px; }
-.search-query-label {
-    position: absolute; left: 12px; top: 4px; width: 780px; height: 30px;
-    color: #f4be76; font-size: 17px; line-height: 26px;
-    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+.panel-note {
+    position: absolute; left: 8px; top: 142px; width: 872px; height: 24px;
+    color: #e2a658; font-size: 16px; line-height: 24px;
 }
-#filter-1 { position: absolute; left: 20px; top: 122px; width: 394px; height: 46px; }
-#filter-3 { position: absolute; left: 438px; top: 122px; width: 394px; height: 46px; }
-#search-apply { position: absolute; left: 20px; top: 178px; width: 812px; height: 42px; }
+
+#display { transition: opacity 0.9s; }
+.dying { opacity: 0.04; }
+
+#chip-p0, #chip-p1, #chip-p2 {
+    position: absolute; top: 160px; width: 40px; height: 24px;
+    border: 1px #bc7e39; border-radius: 4px; color: #f4be76;
+    font-size: 13px; line-height: 22px; text-align: center;
+}
+#chip-p0 { left: 744px; } #chip-p1 { left: 788px; } #chip-p2 { left: 832px; }
+.chip-off { color: #4a3826; border-color: #4a3826; }
+.chip { display: block; }
+.filter-1, .filter-3 { display: block; }
+.search-match { color: #f4be76; }
+.eqband {
+    position: absolute; top: 76px; width: 158px; height: 58px;
+    border: 1px #57452c; border-radius: 6px; color: #e2a658;
+    font-size: 17px; line-height: 56px; text-align: center;
+}
+#eqband-0 { left: 10px; } #eqband-1 { left: 186px; } #eqband-2 { left: 362px; }
+#eqband-3 { left: 538px; } #eqband-4 { left: 714px; }
+.eqband.selected { border: 2px #f4be76; color: #f4be76; }

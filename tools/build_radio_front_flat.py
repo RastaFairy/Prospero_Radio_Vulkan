@@ -310,7 +310,7 @@ def build_art() -> Image.Image:
     draw.ellipse(box((214, 725, 228, 739)), fill=(2, 3, 4), outline=(53, 55, 57), width=px(1))
     text.text((px(221), px(756)), "HEADPHONES", font=font(8), anchor="mm", fill=(44, 45, 45))
 
-    labels = ("HOME", "RADIO", "FAVORITES", "GENRES", "SEARCH", "SETTINGS", "PLAY")
+    labels = ("POWER", "BANDA", "MEM", "AUX", "BARRIDO", "EQ", "PLAY")
     key_start, key_width, gap = 434, 146, 5
     for index, label in enumerate(labels):
         x0 = key_start + index * (key_width + gap)
@@ -320,21 +320,45 @@ def build_art() -> Image.Image:
                                fill=(6, 7, 8), outline=(178, 175, 168), width=px(1))
         draw.rounded_rectangle(box((x0 + 3, y0 + 3, x1 - 3, y1 - 3)), radius=4,
                                fill=(20, 22, 23), outline=(52, 54, 55), width=px(1))
+        cx, cy = (x0 + x1) // 2, 722
+        ink = (201, 202, 198)
         if index == 0:
-            cx, cy = (x0 + x1) // 2, 726
-            draw.polygon([(px(cx - 8), px(cy)), (px(cx), px(cy - 7)), (px(cx + 8), px(cy))],
-                         fill=(207, 207, 202))
-            draw.rectangle(box((cx - 6, cy, cx + 6, cy + 9)), fill=(207, 207, 202))
-        elif index == 6:
-            cx, cy = (x0 + x1) // 2, 728
-            draw.polygon([(px(cx - 15), px(cy - 9)), (px(cx - 15), px(cy + 9)), (px(cx - 1), px(cy))],
-                         fill=(207, 207, 202))
-            draw.line((px(cx + 5), px(cy - 9), px(cx + 5), px(cy + 9)), fill=(207, 207, 202), width=px(3))
-            draw.line((px(cx + 13), px(cy - 9), px(cx + 13), px(cy + 9)), fill=(207, 207, 202), width=px(3))
+            # Power: circle with a top gap plus the vertical stroke.
+            draw.arc(box((cx - 9, cy - 8, cx + 9, cy + 8)), start=-60, end=240,
+                     fill=ink, width=px(2))
+            draw.line((px(cx), px(cy - 15), px(cx), px(cy - 1)), fill=ink, width=px(2))
+            text.text((px(cx), px(746)), "POWER", font=font(9, True), anchor="mm", fill=ink)
+        elif index == 1:
+            # Banda: station list with the cursor notch.
+            for i, ly in enumerate((-6, 0, 6)):
+                draw.line((px(cx - 12), px(cy + ly), px(cx + 12), px(cy + ly)), fill=ink, width=px(2))
+            draw.polygon([(px(cx - 19), px(cy - 3)), (px(cx - 13), px(cy - 3)),
+                          (px(cx - 16), px(cy + 2))], fill=ink)
+            text.text((px(cx), px(746)), "BANDA", font=font(9, True), anchor="mm", fill=ink)
+        elif index == 2:
+            text.text((px(cx), px(cy)), "MEM", font=font(14, True), anchor="mm", fill=ink)
+            text.text((px(cx), px(746)), "MEMORIZAR", font=font(8, True), anchor="mm", fill=ink)
+        elif index == 3:
+            text.text((px(cx), px(cy)), "AUX", font=font(14, True), anchor="mm", fill=ink)
+            text.text((px(cx), px(746)), "ENTRADA", font=font(8, True), anchor="mm", fill=ink)
+        elif index == 4:
+            for off in (-8, 2):
+                draw.line((px(cx - 4 + off), px(cy - 7), px(cx + 4 + off), px(cy)),
+                          fill=ink, width=px(2))
+                draw.line((px(cx - 4 + off), px(cy + 7), px(cx + 4 + off), px(cy)),
+                          fill=ink, width=px(2))
+            text.text((px(cx), px(746)), "BARRIDO", font=font(9, True), anchor="mm", fill=ink)
+        elif index == 5:
+            for i, hh in enumerate((5, 10, 15, 10, 5)):
+                bx = cx - 14 + i * 6
+                draw.rectangle(box((bx, cy - hh // 2, bx + 4, cy + hh // 2)), fill=ink)
+            text.text((px(cx), px(746)), "EQ", font=font(9, True), anchor="mm", fill=ink)
         else:
-            label_font = font(10 if label in ("FAVORITES", "SETTINGS") else 11, True)
-            text.text((px((x0 + x1) / 2), px(729)), label, font=label_font,
-                      anchor="mm", fill=(201, 202, 198))
+            draw.polygon([(px(cx - 15), px(cy - 9)), (px(cx - 15), px(cy + 9)), (px(cx - 1), px(cy))],
+                         fill=ink)
+            draw.line((px(cx + 5), px(cy - 9), px(cx + 5), px(cy + 9)), fill=ink, width=px(3))
+            draw.line((px(cx + 13), px(cy - 9), px(cx + 13), px(cy + 9)), fill=ink, width=px(3))
+            text.text((px(cx), px(746)), "PLAY/PAUSA", font=font(7, True), anchor="mm", fill=ink)
 
     # Tiny panel separators and fasteners are balanced left/right.
     draw = ImageDraw.Draw(canvas)

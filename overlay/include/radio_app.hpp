@@ -24,6 +24,7 @@ public:
     void Poll();
     void HandleInput(const radio_input_event_t& event);
     void Shutdown();
+    bool WantsQuit() const { return quit_requested_; }
 
 private:
     enum class Mode {
@@ -31,7 +32,10 @@ private:
         List,     // station list inside the glass (RADIO / FAVORITES buttons)
         Genres,   // genre list inside the glass
         Search,   // search overlay
-        Settings, // settings panel
+        Settings, // legacy panel (unreachable)
+        Aux,      // external-list entry surface
+        Barrido,  // list ingestion surface
+        Eq,       // equalizer surface
     };
 
     enum class ListKind { Radio, Favorites };
@@ -62,7 +66,21 @@ private:
 
     bool settings_open_ = false;
     unsigned settings_focus_ = 0;
-    int theme_index_ = 0;
+    int poweroff_ticks_ = -1;  /* >=0 while the LCD power-off fade runs */
+    bool quit_requested_ = false;      /* set once, main loop breaks cooperatively (no _Exit) */
+    int presets_[3] = {-1, -1, -1};   /* touchpad quick presets (station idx) */
+    int preset_active_ = -1;          /* zone currently tuned from, -1 = free */
+    bool touch_hold_active_ = false;
+    bool touch_fired_ = false;
+    int touch_zone_ = 0;
+    unsigned long long touch_start_ = 0;
+    unsigned long long lb_frame_ = 0;
+    int lb_pulses_left_ = 0;
+    bool lb_on_ = false;
+    int eq_sel_ = 0;
+    int eq_preset_ = 0;
+    int theme_index_ = 0;      /* applied cabinet finish */
+    int theme_selected_ = 0;   /* picker value in Settings */
     unsigned volume_frame_ = 20;
     unsigned tuner_state_ = 0;
 
@@ -87,10 +105,22 @@ private:
     void ApplyVolumeFrame();
     void ApplyTunerFrame();
     void ApplyButtons();
+    void ShowScreen();
     void PressButton(unsigned index);
+    void RefreshVolumeDisplay();
+    void SelectTheme(int direction);
+    void ApplyTheme(int index);
     void UpdateFocusSearch();
     void UpdateEqualizer(const radio_service_status_t& status);
 
+    void StorePreset(int zone);
+    void RecallPreset(int zone);
+    void LoadPresets();
+    void SavePresets();
+    void LightbarTick();
+    void RefreshEq();
+    void SaveEq();
+    void RefreshAuxPanel();
     void AdjustVolume(int direction);
     void TuneStation(int direction);
     void PlayIndex(unsigned index);

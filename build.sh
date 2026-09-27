@@ -4,7 +4,7 @@ set -euo pipefail
 # This launcher is safe to invoke directly from /mnt/<drive> under WSL.
 # The long-running build is re-executed from WSL's Linux filesystem so bash,
 # Git, chmod, and native tooling never depend on DrvFs/NTFS semantics.
-MODE="${1:-packages}"
+MODE="${1:-ffpfsc}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UPSTREAM_URL="https://github.com/blackbearreloaded/ProsperoRadio.git"
 UPSTREAM_SHA="33898dd35375c1ae8370da137cfb6941d91c7684"
@@ -100,8 +100,10 @@ export APP_STATIC_ARCHIVES="${APP_STATIC_ARCHIVES:-}"
 export APP_IMPORT_STUBS="${VULKAN_STUB_ARGS} ${APP_IMPORT_STUBS:-}"
 
 case "$MODE" in
-    packages)
-        make packages
+    ffpfsc|packages)
+        # packages remains accepted as a legacy alias: only the compressed
+        # .ffpfsc is ever produced, never the duplicate .ffpkg.
+        make ffpfsc
         ;;
     app)
         make app
@@ -114,12 +116,12 @@ case "$MODE" in
         ;;
     *)
         echo "Unknown build mode: $MODE" >&2
-        echo "Use: packages | app | check | clean" >&2
+        echo "Use: ffpfsc | app | check | clean" >&2
         exit 2
         ;;
 esac
 
-if [[ "$MODE" == "packages" || "$MODE" == "app" || "$MODE" == "check" ]]; then
+if [[ "$MODE" == "ffpfsc" || "$MODE" == "packages" || "$MODE" == "app" || "$MODE" == "check" ]]; then
     OUT_DIR="$ROOT_DIR/out"
     rm -rf "$OUT_DIR/PPSA99001"
     cp -r "$WORK_DIR/dist/PPSA99001" "$OUT_DIR/"
@@ -127,6 +129,11 @@ if [[ "$MODE" == "packages" || "$MODE" == "app" || "$MODE" == "check" ]]; then
         [[ -e "$artifact" ]] || continue
         cp -f "$artifact" "$OUT_DIR/"
     done
+
+    # Precision gate: the assembled package must satisfy the reader/layout
+    # rules the runtime ships with (fails the build on regression).
+    echo "==> Precision gate: verifying the assembled package"
+    python3 "$SCRIPT_DIR/overlay/tools/verify-package.py" "$OUT_DIR/PPSA99001" "$SCRIPT_DIR/overlay" || exit 1
 
     stamp_tmp="$OVERLAY_STAMP.tmp.$$"
     printf '%s\n' "$OVERLAY_FINGERPRINT" > "$stamp_tmp"

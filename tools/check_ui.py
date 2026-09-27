@@ -23,6 +23,9 @@ FIXED_IDS = {
     "now-meta", "now-state", "credit-button", "connection-dot", "connection-label",
     "search-overlay", "search-query", "search-query-label", "search-reset", "search-apply",
     "credits-overlay", "credits-close", "brand-mark", "brand-name", "brand-version",
+    "volume-level", "settings-overlay", "settings-current-list", "settings-station-count",
+    "settings-volume-row", "settings-volume-value", "settings-volume-fill",
+    "settings-favorites", "settings-favorites-count", "settings-refresh", "settings-refresh-state",
 }
 
 
@@ -96,12 +99,20 @@ def main() -> int:
         assert len(data) == 18 + dimensions[0] * dimensions[1] * 4
 
     css = (ui / "styles" / "app.rcss").read_text(encoding="utf-8")
-    assert "left: 240px;" in css and "width: 1440px;" in css
+    assert "left: 96px;" in css and "width: 1256px;" in css
     assert "#brand-name" in css and "#brand-version" in css
-    assert css.count("left: 140px;") >= 2
-    assert "top: 52px;" in css
+    assert ".card-0 { left: 96px; top: 200px; }" in css
+    assert ".card-3 { left: 96px; top: 332px; }" in css
+    assert ".station-card { position: absolute; width: 408px; height: 120px;" in css
     assert "#search-query.focused" in css and "#search-apply.focused" in css
     assert "#credit-button.focused" in css and "#play-button.focused" in css
+    assert "#settings-overlay.hidden" in css and ".settings-action.focused" in css
+    input_source = (repo / "src/radio_input.cpp").read_text(encoding="utf-8")
+    app_source = (repo / "src/radio_app.cpp").read_text(encoding="utf-8")
+    assert "left_stick_action(sample[5])" in input_source
+    assert "right_stick_action(sample[6])" in input_source
+    assert "RADIO_INPUT_STATION_PREVIOUS" in app_source and "OpenSettings();" in app_source
+    assert "settings_open_" in app_source and "RADIO_INPUT_VOLUME_UP" in app_source
     play_icon = root.find(".//*[@id='play-icon']")
     playback_sources = {image.get("src") for image in play_icon.findall("img")}
     assert playback_sources == {"icons/play.tga", "icons/stop.tga"}

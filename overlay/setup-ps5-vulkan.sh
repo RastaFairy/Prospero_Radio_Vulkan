@@ -152,7 +152,9 @@ PY
 patch_ps5_vulkan_warning_policy() {
     local helper="$OVERLAY_ROOT/tools/patch-ps5-vulkan-warning-policy.py"
     [[ -f "$helper" ]] || { echo "Missing PS5_Vulkan warning-policy helper: $helper" >&2; exit 2; }
-    python3 "$helper" "$VROOT"
+    local source_fixer="$OVERLAY_ROOT/tools/patch-psbc-warning-sources.py"
+    [[ -f "$source_fixer" ]] || { echo "Missing PSBC source fixer: $source_fixer" >&2; exit 2; }
+    python3 "$helper" "$VROOT" "$source_fixer"
 }
 
 patch_ps5_vulkan_warning_policy

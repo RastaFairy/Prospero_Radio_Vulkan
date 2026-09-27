@@ -2469,7 +2469,12 @@ bool Ps5VulkanRenderInterface::ReadTextureFile(const Rml::String &source,
     const std::size_t source_stride = bytes[16] == 32 ? 4u : 3u;
     const std::size_t pixel_count = static_cast<std::size_t>(width) * height;
     const std::size_t source_bytes = pixel_count * source_stride;
-    if (bytes.size() != 18 + source_bytes)
+    static constexpr char kTgaFooterSignature[] = "TRUEVISION-XFILE.";
+    const bool exact_size = bytes.size() == 18 + source_bytes;
+    const bool footer_size = bytes.size() == 18 + source_bytes + 26 &&
+                             bytes.size() >= 44 &&
+                             std::memcmp(bytes.data() + bytes.size() - 18, kTgaFooterSignature, sizeof(kTgaFooterSignature)) == 0;
+    if (!exact_size && !footer_size)
         return false;
     // TGA is BGRA; the runtime intentionally keeps this ordering for the backplate
     // path. 24-bit sources (the cabinet finish themes) expand to 32-bit with

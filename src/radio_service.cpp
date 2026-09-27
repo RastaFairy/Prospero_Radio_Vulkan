@@ -4,6 +4,8 @@
 
 #include "radio_service.hpp"
 
+#include <cmath>
+
 #include "aac_timing.hpp"
 #include "flac_decoder.hpp"
 #include "icy_metadata.hpp"
@@ -13,6 +15,9 @@
 #include "opus_decoder.hpp"
 #include "opus_pcm.hpp"
 #include "pcm_queue.hpp"
+#include <math.h>
+#include <string.h>
+#include <stdio.h>
 #include "playback_retry.hpp"
 #include "radio_hls.hpp"
 #include "radio_catalog_store.hpp"
@@ -82,6 +87,278 @@
 #define AUDIO_OUT_RATE 48000U
 #define AUDIO_OUT_STEREO_S16 1U
 #define AUDIO_OUT_VOLUME_0DB 0x8000
+
+/* --- v027: 5-band graphic equalizer (RBJ biquads, in-place 16-bit) ---- */
+#define EQ_BANDS 5
+typedef struct
+{
+    float b0, b1, b2, a1, a2, z1, z2;
+} eq_band_state_t;
+static eq_band_state_t g_eq_l[EQ_BANDS];
+static eq_band_state_t g_eq_r[EQ_BANDS];
+static int g_eq_gain_db[EQ_BANDS];
+static int g_eq_preset = 0;
+static bool g_eq_dirty = true;
+static const float g_eq_freq[EQ_BANDS] = {60.0f, 250.0f, 1000.0f, 4000.0f, 12000.0f};
+static const int g_eq_presets[4][EQ_BANDS] = {
+    {0, 0, 0, 0, 0},
+    {5, 3, -1, 3, 4},
+    {2, 1, 2, 0, 1},
+    {3, -1, 2, 2, 3},
+};
+void radio_service_eq_process(int16_t *frames, unsigned count);
+
+static void eq_design_band(int band, eq_band_state_t *out)
+{
+    const float pi = 3.14159265f;
+    const float a = powf(10.0f, g_eq_gain_db[band] / 40.0f);
+    const float w0 = 2.0f * pi * g_eq_freq[band] / 48000.0f;
+    const float cw = cosf(w0), sw = sinf(w0);
+    const float alpha = sw / (2.0f * 0.7071f);
+    float b0, b1, b2, a0, a1, a2;
+    if (band == 0)
+    {
+        const float sq = 2.0f * sqrtf(a) * alpha;
+        b0 = a * ((a + 1) - (a - 1) * cw + sq);
+        b1 = 2 * a * ((a - 1) - (a + 1) * cw);
+        b2 = a * ((a + 1) - (a - 1) * cw - sq);
+        a0 = (a + 1) + (a - 1) * cw + sq;
+        a1 = -2 * ((a - 1) + (a + 1) * cw);
+        a2 = (a + 1) + (a - 1) * cw - sq;
+    }
+    else if (band == EQ_BANDS - 1)
+    {
+        const float sq = 2.0f * sqrtf(a) * alpha;
+        b0 = a * ((a + 1) + (a - 1) * cw + sq);
+        b1 = -2 * a * ((a - 1) + (a + 1) * cw);
+        b2 = a * ((a + 1) + (a - 1) * cw - sq);
+        a0 = (a + 1) - (a - 1) * cw + sq;
+        a1 = 2 * ((a - 1) - (a + 1) * cw);
+        a2 = (a + 1) - (a - 1) * cw - sq;
+    }
+    else
+    {
+        b0 = 1 + alpha * a;
+        b1 = -2 * cw;
+        b2 = 1 - alpha * a;
+        a0 = 1 + alpha / a;
+        a1 = -2 * cw;
+        a2 = 1 - alpha / a;
+    }
+    out->b0 = b0 / a0;
+    out->b1 = b1 / a0;
+    out->b2 = b2 / a0;
+    out->a1 = a1 / a0;
+    out->a2 = a2 / a0;
+    out->z1 = out->z2 = 0;
+}
+
+void radio_service_eq_set_gain(int band, int gain_db)
+{
+    if (band < 0 || band >= EQ_BANDS)
+        return;
+    gain_db = gain_db < -12 ? -12 : gain_db > 12 ? 12 : gain_db;
+    if (g_eq_gain_db[band] != gain_db)
+    {
+        g_eq_gain_db[band] = gain_db;
+        g_eq_dirty = true;
+        g_eq_preset = -1;
+        for (int preset = 0; preset < 4; ++preset)
+        {
+            bool matches = true;
+            for (int index = 0; index < EQ_BANDS; ++index)
+                matches = matches && g_eq_gain_db[index] == g_eq_presets[preset][index];
+            if (matches)
+            {
+                g_eq_preset = preset;
+                break;
+            }
+        }
+    }
+}
+
+int radio_service_eq_gain(int band)
+{
+    return band >= 0 && band < EQ_BANDS ? g_eq_gain_db[band] : 0;
+}
+
+void radio_service_eq_preset(int preset)
+{
+    if (preset < 0 || preset > 3)
+        return;
+    for (int i = 0; i < EQ_BANDS; ++i)
+        g_eq_gain_db[i] = g_eq_presets[preset][i];
+    g_eq_preset = preset;
+    g_eq_dirty = true;
+}
+
+int radio_service_eq_preset(void)
+{
+    return g_eq_preset;
+}
+
+void radio_service_eq_process(int16_t *frames, unsigned count)
+{
+    if (g_eq_dirty)
+    {
+        for (int i = 0; i < EQ_BANDS; ++i)
+        {
+            eq_design_band(i, &g_eq_l[i]);
+            g_eq_r[i] = g_eq_l[i];
+        }
+        g_eq_dirty = false;
+    }
+    for (unsigned f = 0; f < count; ++f)
+    {
+        float l = frames[f * 2];
+        float r = frames[f * 2 + 1];
+        for (int b = 0; b < EQ_BANDS; ++b)
+        {
+            eq_band_state_t *s = &g_eq_l[b];
+            const float yl = s->b0 * l + s->z1;
+            s->z1 = s->b1 * l - s->a1 * yl + s->z2;
+            s->z2 = s->b2 * l - s->a2 * yl;
+            l = yl;
+            s = &g_eq_r[b];
+            const float yr = s->b0 * r + s->z1;
+            s->z1 = s->b1 * r - s->a1 * yr + s->z2;
+            s->z2 = s->b2 * r - s->a2 * yr;
+            r = yr;
+        }
+        frames[f * 2] = (int16_t)(l < -32768.0f ? -32768 : l > 32767.0f ? 32767 : l);
+        frames[f * 2 + 1] = (int16_t)(r < -32768.0f ? -32768 : r > 32767.0f ? 32767 : r);
+    }
+}
+
+/* --- v027: AUX ingest server (best-effort POSIX sockets) -------------- */
+extern "C"
+{
+    extern int socket(int, int, int);
+    extern int bind(int, const void *, unsigned int);
+    extern int listen(int, int);
+    extern int accept(int, void *, unsigned int *);
+    extern long recv(int, void *, unsigned long, int);
+    extern long send(int, const void *, unsigned long, int);
+    extern int close(int);
+    extern int sceNetInit(unsigned long, int, unsigned long, int, unsigned long);
+}
+struct aux_sockaddr_in_t
+{
+    unsigned char len;
+    unsigned char family;
+    unsigned short port_be;
+    unsigned int addr;
+    char zero[8];
+};
+static SDL_Thread *g_aux_thread = nullptr;
+static bool g_aux_running = false;
+static int g_aux_stations = -1;
+static const char AUX_PAGE[] = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
+                               "<!doctype html><title>Prospero AUX</title><meta name=viewport "
+                               "content='width=device-width,initial-scale=1'>"
+                               "<body "
+                               "style='background:#1a120b;color:#f4be76;font-family:sans-serif;"
+                               "text-align:center;padding-top:3em'>"
+                               "<h1>ProsperoRadio AUX</h1><textarea id=m rows=14 style='width:90%' "
+                               "placeholder='Pega aqui tu lista M3U'></textarea>"
+                               "<br><button style='font-size:1.4em;padding:.5em 2em;margin:1em' "
+                               "onclick=\"fetch('/"
+                               "list',{method:'POST',body:document.getElementById('m').value})."
+                               "then(()=>alert('Lista enviada'))\">ENVIAR A LA PS5</button>";
+static const char AUX_OK[] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nOK";
+
+static void aux_count_m3u(void)
+{
+    FILE *f = fopen("/download0/radio-aux.m3u", "rb");
+    if (!f)
+    {
+        g_aux_stations = -1;
+        return;
+    }
+    char line[512];
+    int n = 0;
+    while (fgets(line, sizeof(line), f))
+        if (strncmp(line, "#EXTINF", 7) == 0)
+            ++n;
+    fclose(f);
+    g_aux_stations = n;
+}
+
+static int aux_server_thread(void *arg)
+{
+    (void)arg;
+    const int listener = socket(2 /*AF_INET*/, 1 /*SOCK_STREAM*/, 0);
+    if (listener < 0)
+        return -1;
+    aux_sockaddr_in_t addr{};
+    addr.len = sizeof(addr);
+    addr.family = 2;
+    addr.port_be = (unsigned short)((7000 >> 8) | (7000 << 8));
+    if (bind(listener, &addr, sizeof(addr)) < 0 || listen(listener, 4) < 0)
+    {
+        close(listener);
+        return -1;
+    }
+    for (;;)
+    {
+        const int conn = accept(listener, nullptr, nullptr);
+        if (conn < 0)
+            continue;
+        char request[4096];
+        long got = recv(conn, request, sizeof(request) - 1, 0);
+        if (got <= 0)
+        {
+            close(conn);
+            continue;
+        }
+        request[got] = 0;
+        if (strncmp(request, "POST /list", 10) == 0)
+        {
+            const char *body = strstr(request, "\r\n\r\n");
+            if (body)
+            {
+                body += 4;
+                FILE *f = fopen("/download0/radio-aux.m3u", "wb");
+                if (f)
+                {
+                    fwrite(body, 1, strlen(body), f);
+                    fclose(f);
+                    aux_count_m3u();
+                }
+            }
+            send(conn, AUX_OK, sizeof(AUX_OK) - 1, 0);
+        }
+        else
+        {
+            send(conn, AUX_PAGE, sizeof(AUX_PAGE) - 1, 0);
+        }
+        close(conn);
+    }
+    return 0;
+}
+
+void radio_service_aux_start(void)
+{
+    if (g_aux_running)
+        return;
+    aux_count_m3u();
+    if (sceNetInit(0x40000, 0, 0, 0, 0) < 0)
+        return; /* net stack unavailable: the surface shows the hint */
+    g_aux_thread = SDL_CreateThread(aux_server_thread, "aux", nullptr);
+    g_aux_running = g_aux_thread != nullptr;
+}
+
+bool radio_service_aux_running(void)
+{
+    return g_aux_running;
+}
+
+int radio_service_aux_stations(void)
+{
+    return g_aux_stations;
+}
+
+void radio_service_eq_process(int16_t *frames, unsigned count);
 #define AUDIO_QUEUE_BLOCKS 375U
 #define AUDIO_START_BLOCKS 188U
 #define AUDIO_RESTART_BLOCKS 94U
@@ -299,6 +576,7 @@ static SDL_mutex *g_store_mutex;
 static catalog_task_t g_pending_task;
 static bool g_pending_task_ready;
 static radio_service_status_t g_status;
+static SDL_atomic_t g_volume_percent = {100};
 static SDL_mutex *g_state_mutex;
 static SDL_mutex *g_request_mutex;
 static SDL_atomic_t g_refresh_running;
@@ -425,7 +703,7 @@ static void migrate_legacy_favorites(void)
 
     favorites_file_t file;
     unsigned count = 0U;
-    const char(*uuids)[40] = nullptr;
+    const char (*uuids)[40] = nullptr;
     if (read_exact(FAVORITES_PATH, &file, sizeof(file)) && file.header.magic == FAVORITES_MAGIC &&
         file.header.version == FAVORITES_FIXED_VERSION &&
         file.header.count <= LEGACY_CATALOG_CAPACITY &&
@@ -1677,12 +1955,32 @@ static size_t sink_ready_target(bool started, bool played)
     return played ? AUDIO_RESTART_BLOCKS : AUDIO_START_BLOCKS;
 }
 
+static void sink_apply_volume(audio_sink_t *sink, int percent)
+{
+    if (sink == nullptr || sink->handle < 0)
+        return;
+    if (percent < 0)
+        percent = 0;
+    if (percent > 100)
+        percent = 100;
+    /* Perceptual audio-taper curve: the console's linear map left the upper
+     * half of the knob nearly inaudible (50->100 percent is only 6 dB). A
+     * 2.5-power taper gives the whole travel an even perceived response. */
+    const float tapered = std::pow(static_cast<float>(percent) / 100.0f, 2.5f);
+    const int level = static_cast<int>(AUDIO_OUT_VOLUME_0DB * tapered + 0.5f);
+    int volumes[8];
+    for (int &volume : volumes)
+        volume = level;
+    sceAudioOutSetVolume(sink->handle, 3, volumes);
+}
+
 static int sink_audio_thread(void *argument)
 {
     auto *sink = static_cast<audio_sink_t *>(argument);
     int16_t block[AUDIO_OUT_GRAIN * 2U];
     bool started = false;
     bool played = false;
+    int applied_volume = -1;
 
     for (;;)
     {
@@ -1715,9 +2013,16 @@ static int sink_audio_thread(void *argument)
         size_t index = 0;
         pcm_queue_pop(&sink->queue, &index);
         memcpy(block, sink->queue_blocks + index * AUDIO_OUT_GRAIN * 2U, sizeof(block));
+        radio_service_eq_process(block, AUDIO_OUT_GRAIN);
         SDL_CondSignal(sink->can_write);
         SDL_UnlockMutex(sink->mutex);
 
+        const int requested_volume = SDL_AtomicGet(&g_volume_percent);
+        if (requested_volume != applied_volume)
+        {
+            sink_apply_volume(sink, requested_volume);
+            applied_volume = requested_volume;
+        }
         const int result = sceAudioOutOutput(sink->handle, block);
         if (result < 0)
         {
@@ -1774,10 +2079,7 @@ static int sink_open(audio_sink_t *sink, uint32_t input_rate, uint32_t channels)
         sceAudioOutOpen(0xff, 0, 0, AUDIO_OUT_GRAIN, AUDIO_OUT_RATE, AUDIO_OUT_STEREO_S16);
     if (sink->handle < 0)
         goto fail;
-    int volumes[8];
-    for (unsigned i = 0; i < 8; ++i)
-        volumes[i] = AUDIO_OUT_VOLUME_0DB;
-    sceAudioOutSetVolume(sink->handle, 3, volumes);
+    sink_apply_volume(sink, SDL_AtomicGet(&g_volume_percent));
     /*
      * The PS5 SDL backend forwards non-null names to pthread_set_name_np.
      * That optional import is unavailable on the target runtime and resolves
@@ -3139,6 +3441,18 @@ bool radio_service_get_station(unsigned index, radio_station_t *out_station)
     return found;
 }
 
+unsigned radio_service_get_favorite_count(void)
+{
+    if (g_store_mutex == nullptr)
+        return 0U;
+    radio_catalog_query_t query{};
+    SDL_LockMutex(g_store_mutex);
+    const size_t count = radio_catalog_store_query_count(&g_catalog_store, &query, true);
+    const int error = radio_catalog_store_error(&g_catalog_store);
+    SDL_UnlockMutex(g_store_mutex);
+    return error == 0 && count <= UINT_MAX ? static_cast<unsigned>(count) : 0U;
+}
+
 bool radio_service_query_page(const radio_catalog_query_t *query, radio_catalog_order_t order,
                               bool favorites_only, unsigned offset, unsigned limit,
                               unsigned *out_total)
@@ -3402,6 +3716,19 @@ void radio_service_play(unsigned station_index)
     scePthreadDetach(thread);
 }
 
+void radio_service_set_volume(unsigned volume_percent)
+{
+    if (volume_percent > 100U)
+        volume_percent = 100U;
+    SDL_AtomicSet(&g_volume_percent, static_cast<int>(volume_percent));
+}
+
+unsigned radio_service_get_volume(void)
+{
+    const int volume = SDL_AtomicGet(&g_volume_percent);
+    return volume < 0 ? 0U : static_cast<unsigned>(volume);
+}
+
 void radio_service_stop(void)
 {
     if (SDL_AtomicGet(&g_playback_running))
@@ -3418,4 +3745,6 @@ void radio_service_stop(void)
             sceHttpAbortRequest(g_playback_request);
         SDL_UnlockMutex(g_request_mutex);
     }
+}
+
 }

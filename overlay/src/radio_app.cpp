@@ -16,8 +16,10 @@
 #include <RmlUi/Core/ElementDocument.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstdlib>
 #include <cstring>
 
@@ -127,10 +129,23 @@ bool RadioApp::Initialize(Rml::ElementDocument *document)
     service_started_ = true;
     RebuildFacets();
     genre_total_ = static_cast<unsigned>(genre_facets_.size());
-    LoadTheme();
-    ApplyTheme();
     ApplyVolumeFrame();
     ApplyTunerFrame();
+    LoadPresets();
+    {
+        std::FILE *f = std::fopen("/download0/radio-eq.txt", "rb");
+        if (f)
+        {
+            for (int b = 0; b < 5; ++b)
+            {
+                int gain = 0;
+                if (std::fscanf(f, "%d", &gain) != 1)
+                    break;
+                radio_service_eq_set_gain(b, gain);
+            }
+            std::fclose(f);
+        }
+    }
     ApplyButtons();
     BuildList();
     RefreshHome();
@@ -210,14 +225,28 @@ void RadioApp::RebuildFacets()
 
 /* --- buttons ---------------------------------------------------------- */
 
+void RadioApp::ShowScreen()
+{
+    /* Exactly one glass surface per mode: no stacked panels, ever. */
+    SetVisible(document_, "screen-home", mode_ == Mode::Home);
+    SetVisible(document_, "screen-list", mode_ == Mode::List);
+    SetVisible(document_, "screen-genres", mode_ == Mode::Genres);
+    SetVisible(document_, "settings-panel", false);
+    SetVisible(document_, "search-panel", false);
+    SetVisible(document_, "screen-aux", mode_ == Mode::Aux);
+    SetVisible(document_, "screen-barrido", mode_ == Mode::Barrido);
+    SetVisible(document_, "screen-eq", mode_ == Mode::Eq);
+}
+
 void RadioApp::ApplyButtons()
 {
+    ShowScreen();
     static const char *names[] = {"home", "radio", "favorites", "genres",
                                   "search", "settings", "play-pause"};
     static const char *states[] = {"normal", "focus", "pressed", "selected", "selected_focus"};
     static const Mode selected_mode[] = {
-        Mode::Home,   Mode::List,    Mode::List,     Mode::Genres,
-        Mode::Search, Mode::Settings, Mode::Home,
+        Mode::Home,   Mode::List,    Mode::List,     Mode::Aux,
+        Mode::Barrido, Mode::Eq,     Mode::Home,
     };
     static const ListKind selected_list[] = {
         ListKind::Radio, ListKind::Radio, ListKind::Favorites, ListKind::Radio,
@@ -227,7 +256,7 @@ void RadioApp::ApplyButtons()
     radio_service_get_status(&status);
     for (unsigned i = 0; i < kButtonCount; ++i)
     {
-        const bool selected = mode_ == selected_mode[i] &&
+        const bool selected = i != 0 && mode_ == selected_mode[i] &&
                               (selected_mode[i] != Mode::List || list_kind_ == selected_list[i]) &&
                               !(i == 6 && !PlaybackActive(status.playback_state));
         const bool focused = mode_ == Mode::Home && button_focus_ == i;
@@ -248,11 +277,14 @@ void RadioApp::PressButton(unsigned index)
 {
     switch (index)
     {
-    case 0: // HOME
-        mode_ = Mode::Home;
-        ApplyButtons();
-        RefreshHome();
-        break;
+    case 0: // POWER — fade del LCD y salida cruda (sin teardown de libc)
+        if (poweroff_ticks_ < 0)
+        {
+            poweroff_ticks_ = 36;
+            SetClass(document_, "display", "dying", true);
+            SetText(document_, "home-status", "APAGANDO");
+        }
+        return;
     case 1: // RADIO
         mode_ = Mode::List;
         list_kind_ = ListKind::Radio;
@@ -269,20 +301,23 @@ void RadioApp::PressButton(unsigned index)
         RefreshList();
         ApplyButtons();
         break;
-    case 3: // GENRES
-        mode_ = Mode::Genres;
-        genre_start_ = genre_cursor_ = 0;
-        RefreshGenres();
+    case 3: // BARRIDO — reescanea el fichero subido por AUX
+        mode_ = Mode::Barrido;
+        radio_service_aux_start();
+        SetText(document_, "barrido-status",
+                radio_service_aux_stations() >= 0
+                    ? "LISTA CARGADA EN MEMORIA - LISTA PARA REPRODUCIR"
+                    : "SIN LISTAS - ENTRA POR AUX Y ENVIA UNA M3U");
         ApplyButtons();
         break;
-    case 4: // SEARCH
-        OpenSearch();
+    case 4: // AUX — servidor HTTP de listas en el puerto 7000
+        mode_ = Mode::Aux;
+        radio_service_aux_start();
+        RefreshAuxPanel();
+        ApplyButtons();
         break;
-    case 5: // SETTINGS
-        mode_ = Mode::Settings;
-        settings_open_ = true;
-        settings_focus_ = 0;
-        RefreshSettings();
+    case 5: // EQ — superficie visible; DSP de bandas en v027
+        mode_ = Mode::Eq;
         ApplyButtons();
         break;
     case 6: // PLAY / PAUSE
@@ -310,6 +345,7 @@ void RadioApp::AdjustVolume(int direction)
     {
         radio_service_set_volume(static_cast<unsigned>(next));
         ApplyVolumeFrame();
+        RefreshVolumeDisplay();
     }
     if (mode_ == Mode::Settings)
         RefreshSettings(false);
@@ -317,6 +353,7 @@ void RadioApp::AdjustVolume(int direction)
 
 void RadioApp::TuneStation(int direction)
 {
+    preset_active_ = -1;
     radio_service_status_t status{};
     radio_service_get_status(&status);
     if (status.station_count == 0U)
@@ -430,6 +467,8 @@ void RadioApp::RefreshList()
         }
         std::snprintf(id, sizeof(id), "list-name-%u", row);
         SetText(document_, id, station.name);
+        SetClass(document_, id, "search-match",
+                 *search_query_ && ContainsCi(station.name, search_query_));
         std::snprintf(id, sizeof(id), "list-meta-%u", row);
         char tag[40];
         FirstValue(station.tags, tag, sizeof(tag));
@@ -562,7 +601,7 @@ void RadioApp::RefreshSettings(bool refresh_favorites)
     SetText(document_, "settings-refresh-state", status.refreshing ? "Updating..." : "Ready");
     static const char *theme_names[] = {"Walnut", "Silver", "Graphite"};
     SetText(document_, "settings-theme-value",
-            theme_names[theme_index_ % (sizeof(theme_names) / sizeof(theme_names[0]))]);
+            theme_names[theme_selected_ % (sizeof(theme_names) / sizeof(theme_names[0]))]);
     SetClass(document_, "settings-theme-row", "focused", settings_focus_ == 0U);
     SetClass(document_, "settings-favorites", "focused", settings_focus_ == 1U);
     SetClass(document_, "settings-refresh", "focused", settings_focus_ == 2U);
@@ -572,17 +611,16 @@ void RadioApp::HandleSettingsKey(radio_input_key_t key)
 {
     if (key == RADIO_INPUT_CIRCLE || key == RADIO_INPUT_TRIANGLE)
     {
+        theme_selected_ = theme_index_; // cancel a pending selection
         mode_ = Mode::Home;
         settings_open_ = false;
-        SetVisible(document_, "settings-panel", false);
-        SetVisible(document_, "screen-home", true);
         ApplyButtons();
         return;
     }
     if (key == RADIO_INPUT_LEFT || key == RADIO_INPUT_RIGHT)
     {
         if (settings_focus_ == 0U)
-            CycleTheme(key == RADIO_INPUT_LEFT ? -1 : 1);
+            SelectTheme(key == RADIO_INPUT_LEFT ? -1 : 1);
         RefreshSettings();
         return;
     }
@@ -597,7 +635,13 @@ void RadioApp::HandleSettingsKey(radio_input_key_t key)
         return;
     if (settings_focus_ == 0U)
     {
-        CycleTheme(1);
+        if (theme_selected_ != theme_index_)
+        {
+            theme_index_ = theme_selected_;
+            ApplyTheme();
+            SaveTheme();
+        }
+        RefreshSettings();
         return;
     }
     if (settings_focus_ == 1U)
@@ -606,8 +650,6 @@ void RadioApp::HandleSettingsKey(radio_input_key_t key)
         list_kind_ = ListKind::Favorites;
         list_start_ = list_cursor_ = 0;
         settings_open_ = false;
-        SetVisible(document_, "settings-panel", false);
-        SetVisible(document_, "screen-list", true);
         BuildList();
         RefreshList();
         ApplyButtons();
@@ -627,7 +669,6 @@ void RadioApp::OpenSearch()
     mode_ = Mode::Search;
     CopyString(search_edit_, sizeof(search_edit_), search_query_);
     search_focus_ = 0;
-    SetVisible(document_, "search-panel", true);
     UpdateSearch();
     ApplyButtons();
 }
@@ -639,15 +680,12 @@ void RadioApp::CloseSearch(bool apply)
     radio_ime_cancel();
     search_open_ = false;
     mode_ = Mode::Home;
-    SetVisible(document_, "search-panel", false);
-    SetVisible(document_, "screen-home", true);
     if (apply)
     {
         CopyString(search_query_, sizeof(search_query_), search_edit_);
         mode_ = Mode::List;
         list_kind_ = ListKind::Radio;
         list_start_ = list_cursor_ = 0;
-        SetVisible(document_, "screen-list", true);
         BuildList();
         RefreshList();
         ApplyButtons();
@@ -752,7 +790,6 @@ void RadioApp::UpdateFocusSearch()
 {
     SetClass(document_, "search-query", "focused", search_focus_ == 0);
     SetClass(document_, "filter-1", "focused", search_focus_ == 1);
-    SetClass(document_, "filter-2", "focused", search_focus_ == 2);
     SetClass(document_, "filter-3", "focused", search_focus_ == 3);
     SetClass(document_, "search-apply", "focused", search_focus_ == 4);
 }
@@ -793,20 +830,34 @@ void RadioApp::SaveTheme() const
 
 void RadioApp::ApplyTheme()
 {
-    SetClass(document_, "radio-backdrop", "backdrop-hidden", theme_index_ != 0);
-    SetClass(document_, "radio-backdrop-silver", "backdrop-hidden", theme_index_ != 1);
-    SetClass(document_, "radio-backdrop-graphite", "backdrop-hidden", theme_index_ != 2);
-    SetClass(document_, "controls-layer", "hidden", theme_index_ != 0);
+    ApplyTheme(theme_index_);
 }
 
-void RadioApp::CycleTheme(int direction)
+void RadioApp::ApplyTheme(int index)
 {
-    theme_index_ = (theme_index_ + 3 + (direction > 0 ? 1 : -1)) % 3;
-    ApplyTheme();
-    SaveTheme();
+    /* Single Walnut/hybrid finish since 026: the silver/graphite backdrops are
+     * gone from the RML, so the theme switch is a no-op kept for the legacy
+     * call sites. The controls layer stays visible. */
+    (void)index;
+    SetClass(document_, "controls-layer", "hidden", false);
+}
+
+void RadioApp::SelectTheme(int direction)
+{
+    /* Left / right only move the picker; Cross applies and persists. */
+    theme_selected_ = (theme_selected_ + 3 + (direction > 0 ? 1 : -1)) % 3;
 }
 
 /* --- atlas frames ----------------------------------------------------- */
+
+void RadioApp::RefreshVolumeDisplay()
+{
+    /* Independent of ApplyVolumeFrame: the figure must track the service even
+     * when the sprite stays on the same 5% step. */
+    char text[32];
+    std::snprintf(text, sizeof(text), "VOL %u%%", radio_service_get_volume());
+    SetText(document_, "volume-level", text);
+}
 
 void RadioApp::ApplyVolumeFrame()
 {
@@ -845,9 +896,96 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
 {
     if (!event.pressed)
         return;
+    /* EQ takes the left dial first: it edits the selected band's gain. */
+    if (mode_ == Mode::Eq &&
+        (event.key == RADIO_INPUT_VOLUME_UP || event.key == RADIO_INPUT_VOLUME_DOWN))
+    {
+        const int gain = radio_service_eq_gain(eq_sel_);
+        radio_service_eq_set_gain(eq_sel_, gain + (event.key == RADIO_INPUT_VOLUME_UP ? 1 : -1));
+        SaveEq();
+        RefreshEq();
+        return;
+    }
     if (event.key == RADIO_INPUT_VOLUME_UP || event.key == RADIO_INPUT_VOLUME_DOWN)
     {
         AdjustVolume(event.key == RADIO_INPUT_VOLUME_UP ? 1 : -1);
+        return;
+    }
+
+    if (event.key == RADIO_INPUT_PAD_CLICK)
+    {
+        /* Panel tactil: dedo en zona + click corto = preset, click 3 s = graba. */
+        if (event.pressed)
+        {
+            unsigned short tx = 0, ty = 0;
+            if (radio_input_touch(&tx, &ty))
+            {
+                touch_zone_ = tx < 640 ? 0 : tx < 1280 ? 1 : 2;
+                touch_hold_active_ = true;
+                touch_fired_ = false;
+                touch_start_ = radio_input_milliseconds();
+            }
+        }
+        else if (touch_hold_active_ && !touch_fired_)
+        {
+            touch_hold_active_ = false;
+            RecallPreset(touch_zone_);
+        }
+        return;
+    }
+
+    if (mode_ == Mode::Eq)
+    {
+        if (event.key == RADIO_INPUT_TRIANGLE || event.key == RADIO_INPUT_CIRCLE)
+        {
+            mode_ = Mode::Home;
+            ApplyButtons();
+            RefreshHome();
+            return;
+        }
+        if (event.key == RADIO_INPUT_STATION_NEXT || event.key == RADIO_INPUT_RIGHT)
+        {
+            eq_sel_ = (eq_sel_ + 1) % 5;
+            RefreshEq();
+            return;
+        }
+        if (event.key == RADIO_INPUT_STATION_PREVIOUS || event.key == RADIO_INPUT_LEFT)
+        {
+            eq_sel_ = (eq_sel_ + 4) % 5;
+            RefreshEq();
+            return;
+        }
+        if (event.key == RADIO_INPUT_VOLUME_UP)
+        {
+            radio_service_eq_set_gain(eq_sel_, radio_service_eq_gain(eq_sel_) + 1);
+            RefreshEq();
+            return;
+        }
+        if (event.key == RADIO_INPUT_VOLUME_DOWN)
+        {
+            radio_service_eq_set_gain(eq_sel_, radio_service_eq_gain(eq_sel_) - 1);
+            RefreshEq();
+            return;
+        }
+        if (event.key == RADIO_INPUT_CROSS)
+        {
+            eq_preset_ = (eq_preset_ + 1) % 4;
+            radio_service_eq_preset(eq_preset_);
+            SaveEq();
+            RefreshEq();
+            return;
+        }
+        return;
+    }
+
+    if (mode_ == Mode::Aux || mode_ == Mode::Barrido)
+    {
+        if (event.key == RADIO_INPUT_TRIANGLE || event.key == RADIO_INPUT_CIRCLE)
+        {
+            mode_ = Mode::Home;
+            ApplyButtons();
+            RefreshHome();
+        }
         return;
     }
 
@@ -895,8 +1033,6 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
                 mode_ = Mode::List;
                 list_kind_ = ListKind::Radio;
                 list_start_ = list_cursor_ = 0;
-                SetVisible(document_, "screen-genres", false);
-                SetVisible(document_, "screen-list", true);
                 BuildList();
                 RefreshList();
                 ApplyButtons();
@@ -906,8 +1042,6 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
         if (event.key == RADIO_INPUT_CIRCLE || event.key == RADIO_INPUT_TRIANGLE)
         {
             mode_ = Mode::Home;
-            SetVisible(document_, "screen-genres", false);
-            SetVisible(document_, "screen-home", true);
             ApplyButtons();
             return;
         }
@@ -970,8 +1104,6 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
         if (event.key == RADIO_INPUT_CIRCLE || event.key == RADIO_INPUT_TRIANGLE)
         {
             mode_ = Mode::Home;
-            SetVisible(document_, "screen-list", false);
-            SetVisible(document_, "screen-home", true);
             ApplyButtons();
             return;
         }
@@ -1015,6 +1147,23 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
 
 void RadioApp::Poll()
 {
+    if (poweroff_ticks_ >= 0)
+    {
+        if (--poweroff_ticks_ <= 0)
+        {
+            std::fflush(nullptr);
+            quit_requested_ = true;
+        }
+        return;
+    }
+    if (touch_hold_active_ && !touch_fired_ &&
+        radio_input_milliseconds() - touch_start_ >= 3000)
+    {
+        touch_fired_ = true;
+        touch_hold_active_ = false;
+        StorePreset(touch_zone_);
+    }
+    LightbarTick();
     radio_service_status_t status{};
     radio_service_get_status(&status);
     if (!have_last_status_ || status.catalog_generation != last_status_.catalog_generation ||
@@ -1079,4 +1228,116 @@ void RadioApp::UpdateEqualizer(const radio_service_status_t &status)
         std::snprintf(id, sizeof(id), "eq-%u", i);
         SetPixelProperty(document_, id, "height", height);
     }
+}
+
+/* --- v027: touchpad presets, lightbar pulses, EQ surface --------------- */
+
+void RadioApp::SaveEq()
+{
+    std::FILE *file = std::fopen("/download0/radio-eq.txt", "wb");
+    if (file)
+    {
+        for (int b = 0; b < 5; ++b)
+            std::fprintf(file, "%d%c", radio_service_eq_gain(b), b == 4 ? '\n' : ' ');
+        std::fclose(file);
+    }
+}
+
+void RadioApp::LoadPresets()
+{
+    std::FILE *file = std::fopen("/download0/radio-presets.bin", "rb");
+    if (file)
+    {
+        if (std::fread(presets_, sizeof(presets_), 1, file) != 1)
+            presets_[0] = presets_[1] = presets_[2] = -1;
+        std::fclose(file);
+    }
+}
+
+void RadioApp::SavePresets()
+{
+    std::FILE *file = std::fopen("/download0/radio-presets.bin", "wb");
+    if (file)
+    {
+        std::fwrite(presets_, sizeof(presets_), 1, file);
+        std::fclose(file);
+    }
+}
+
+void RadioApp::StorePreset(int zone)
+{
+    if (zone < 0 || zone > 2)
+        return;
+    presets_[zone] = static_cast<int>(tuned_index_);
+    preset_active_ = zone;
+    SavePresets();
+    lb_pulses_left_ = 2 * (zone + 1);
+    SetText(document_, "home-status",
+            zone == 0 ? "P1 MEMORIZADA" : zone == 1 ? "P2 MEMORIZADA" : "P3 MEMORIZADA");
+}
+
+void RadioApp::RecallPreset(int zone)
+{
+    if (zone < 0 || zone > 2)
+        return;
+    if (presets_[zone] < 0)
+    {
+        SetText(document_, "home-status",
+                zone == 0 ? "P1 VACIA" : zone == 1 ? "P2 VACIA" : "P3 VACIA");
+        return;
+    }
+    preset_active_ = zone;
+    tuned_index_ = static_cast<unsigned>(presets_[zone]);
+    lb_pulses_left_ = 2 * (zone + 1);
+    PlayIndex(tuned_index_);
+    RefreshHome();
+}
+
+void RadioApp::LightbarTick()
+{
+    ++lb_frame_;
+    const bool holding = touch_hold_active_ && !touch_fired_;
+    bool on;
+    if (holding)
+        on = (lb_frame_ / 7) % 2 == 0;
+    else if (lb_pulses_left_ > 0)
+    {
+        on = (lb_frame_ / 11) % 2 == 0;
+        if (!on && lb_on_)
+            --lb_pulses_left_;
+    }
+    else
+        on = preset_active_ >= 0;
+    if (on != lb_on_)
+    {
+        lb_on_ = on;
+        radio_input_lightbar(on ? 244 : 0, on ? 190 : 0, on ? 118 : 0);
+    }
+}
+
+void RadioApp::RefreshEq()
+{
+    static const char *bands[5] = {"60Hz", "250Hz", "1kHz", "4kHz", "12kHz"};
+    for (int i = 0; i < 5; ++i)
+    {
+        char id[16];
+        std::snprintf(id, sizeof(id), "eqband-%d", i);
+        char text[32];
+        std::snprintf(text, sizeof(text), "%s %s%d", bands[i],
+                      radio_service_eq_gain(i) > 0 ? "+" : "",
+                      radio_service_eq_gain(i));
+        SetText(document_, id, text);
+        SetClass(document_, id, "selected", i == eq_sel_);
+    }
+}
+
+void RadioApp::RefreshAuxPanel()
+{
+    SetText(document_, "aux-url", radio_service_aux_running()
+                                      ? "AUX ACTIVO - PUERTO 7000"
+                                      : "RED NO DISPONIBLE");
+    const int stations = radio_service_aux_stations();
+    SetText(document_, "aux-note",
+            stations >= 0 ? "Entra desde el movil, envia tu M3U y pulsa BARRIDO"
+                          : "Sube tu lista M3U desde el movil o el PC");
 }

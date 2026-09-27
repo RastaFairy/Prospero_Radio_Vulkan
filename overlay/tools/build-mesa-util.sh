@@ -95,9 +95,7 @@ for source in "${sources[@]}"; do
         cd "$mesa"
         PS5_PAYLOAD_SDK="$sdk" sh "$root/tooling/prospero-clang18" \
             -std=gnu11 -O2 -g -Wall -fPIC -DOPENGNM_PSBC_ORBIS=1 \
-            -Dstatic_assert=_Static_assert \
-            -Wno-unused-function -Wno-unused-variable \
-            -Wno-unreachable-code-generic-assoc \
+            -Dstatic_assert=_Static_assert -Werror \
             "${flags[@]}" -c "$source" -o "$object"
     )
     [[ -f "$object" ]] || {
