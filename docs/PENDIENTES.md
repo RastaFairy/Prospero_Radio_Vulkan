@@ -12,6 +12,9 @@ El autor confirmó en la última prueba:
 - El EQ permite edición y conserva sus valores.
 - La reproducción vuelve a producir audio de forma fiable.
 - La lista puede recorrer el catálogo completo, no solo la primera página.
+- El autor confirma que □ guarda favoritos entre las primeras siete emisoras, pero
+  falla al guardar emisoras posteriores. El arreglo aún no está implementado ni
+  validado.
 
 La versión exacta instalada no se contrastó con el árbol fuente durante esa prueba.
 Hay que repetir estas comprobaciones al preparar una release.
@@ -62,6 +65,21 @@ Hay que repetir estas comprobaciones al preparar una release.
 - Probar una subida M3U desde otro dispositivo, respetar `Content-Length` y límites,
   importar las entradas al catálogo y mostrar errores de URL/formato. Confirmar una
   emisora conectándose a su URL real antes de indicar reproducción.
+
+### P1 — Guardar favoritos en todas las páginas del catálogo
+
+- En consola, □ permite guardar las primeras siete emisoras, pero no las que vienen
+  después.
+- Causa probable, inferida del código actual: `RadioApp::BuildList` crea índices de
+  catálogo globales (`list_start_ + row`) y `HandleInput` los pasa a
+  `radio_service_toggle_favorite`; sin embargo, `radio_service_query_page` guarda
+  solo la página en `g_stations` y `radio_service_toggle_favorite` rechaza cualquier
+  índice mayor o igual que `g_station_count` (cantidad de filas cargadas en esa
+  página). Confirmar esta discrepancia y corregir la resolución del UUID global sin
+  cambiar la identidad/orden de las emisoras.
+- Criterio de aceptación: guardar y quitar favoritos antes y después del límite de
+  página, cambiar de página/lista y volver, reiniciar la app y confirmar que la
+  selección persiste y corresponde a la emisora correcta. Validar en consola.
 
 ## Pendientes de validación
 
