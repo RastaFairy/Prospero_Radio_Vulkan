@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""Post-build precision gate for the ProsperoRadio package (v024, hardened).
+# Copyright (C) 2026 BlackBearReloaded
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+"""Post-build precision gate for the ProsperoRadio package (v036, hardened).
 
 Run against the assembled package. It mirrors the shipped reader and layout
 rules so a regression in any of them fails the gate before flashing:
 
   V  version coherence: apply-vulkan VERSION == param.json == RML stamp ==
      runtime banner inside eboot.bin
+  P  persistence helper: named ELF is present and targets x86-64 ELF64
   R  RML: full tag-stack well-formedness (not just div balance); every static
      id the C++ touches exists; every <img> source is packaged; 21 volume
      frames stacked
@@ -140,6 +144,26 @@ def check_versions(pkg: Path, overlay: Path, report: Report) -> None:
         report.ok("version", f"runtime banner == {expected}")
     else:
         report.fail("version", "runtime banner missing from eboot.bin")
+
+
+def check_persistence_payload(pkg: Path, report: Report) -> None:
+    payload = pkg / "assets/payload/ProsperoRadioDataBridge.elf"
+    if not payload.is_file():
+        report.fail("payload", "named persistence ELF is missing from the assembled package")
+        return
+    data = payload.read_bytes()
+    if len(data) < 64 or data[:4] != b"\x7fELF":
+        report.fail("payload", "persistence asset is not a complete ELF")
+        return
+    elf_class, data_encoding = data[4], data[5]
+    machine = int.from_bytes(data[18:20], "little") if data_encoding == 1 else -1
+    if elf_class != 2 or data_encoding != 1 or machine != 62:
+        report.fail(
+            "payload",
+            f"expected little-endian ELF64 x86-64 (class={elf_class}, data={data_encoding}, machine={machine})",
+        )
+    else:
+        report.ok("payload", f"named ELF64 x86-64 helper packaged ({len(data)} bytes)")
 
 
 def check_rml(pkg: Path, overlay: Path, report: Report) -> None:
@@ -382,6 +406,7 @@ def main() -> int:
 
     report = Report()
     check_versions(pkg, overlay, report)
+    check_persistence_payload(pkg, report)
     check_rml(pkg, overlay, report)
     check_css(pkg, overlay, report)
     check_geometry(pkg, report)

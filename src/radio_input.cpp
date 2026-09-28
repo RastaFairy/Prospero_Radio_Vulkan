@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
 
 #define INPUT_QUEUE_SIZE 64U
 #define PAD_SAMPLE_SIZE 120U
@@ -58,6 +59,7 @@ static unsigned char samples[PAD_SAMPLE_CAPACITY][PAD_SAMPLE_SIZE];
 static unsigned queue_read;
 static unsigned queue_write;
 static uint32_t button_state;
+static bool pad_click_down;
 static float left_stick_angle;
 static float left_stick_accum;
 static bool left_rotary_active;
@@ -70,6 +72,7 @@ static int32_t pad_handle = -1;
 static unsigned short touch_x = 0, touch_y = 0;
 static bool touch_finger = false;
 static bool touch_valid = false;
+static uint64_t touch_sample_at;
 static bool owns_user_service;
 
 static uint64_t monotonic_milliseconds(void)
@@ -134,8 +137,17 @@ static void queue_push(radio_input_key_t key, bool pressed)
         /* ponytail: bounded input; discard the oldest event instead of allocating. */
         queue_read = (queue_read + 1U) % INPUT_QUEUE_SIZE;
     }
-    queue[queue_write] = (radio_input_event_t){key, pressed};
+    queue[queue_write] = (radio_input_event_t){key, pressed, false, 0, 0};
     queue_write = next;
+}
+
+static void queue_touch_click(bool pressed, bool contact, unsigned short x, unsigned short y)
+{
+    queue_push(RADIO_INPUT_PAD_CLICK, pressed);
+    const unsigned latest = (queue_write + INPUT_QUEUE_SIZE - 1U) % INPUT_QUEUE_SIZE;
+    queue[latest].touch_contact = contact;
+    queue[latest].touch_x = x;
+    queue[latest].touch_y = y;
 }
 
 static void update_analog_action(int current, int *previous, uint64_t *repeat_at, uint64_t now,
@@ -178,24 +190,34 @@ static void process_sample(const unsigned char *sample)
     }
     button_state = current;
 
-    /* Touchpad: click is bit 20 of the button mask; the finger block
-     * sits at 0x20 (counter u16, status, then id+x+y slots). The
-     * validity gate keeps the feature inert on unknown layouts. */
-    if ((current & UINT32_C(0x00100000)) != 0)
-        queue_push(RADIO_INPUT_PAD_CLICK, true);
-    else if (button_state != 0)
-        queue_push(RADIO_INPUT_PAD_CLICK, false);
-    if (sample[0x20] != 0 || sample[0x21] != 0)
+    /* ScePadData.touchData starts at 0x34: touchNum, 3 reserved bytes,
+     * reserve1, then touch[0] (x, y, id). A touch point is live when the
+     * high bit of its id is clear. Clear contact every sample so a click can
+     * never reuse coordinates from an earlier touch. */
+    touch_finger = false;
+    if (sample[0x34] != 0)
     {
-        const unsigned short px = (unsigned short)(sample[0x25] | (sample[0x26] << 8));
-        const unsigned short py = (unsigned short)(sample[0x27] | (sample[0x28] << 8));
-        if (px < 1920 && py < 1080)
+        const unsigned short px = (unsigned short)(sample[0x3c] | ((unsigned)sample[0x3d] << 8));
+        const unsigned short py = (unsigned short)(sample[0x3e] | ((unsigned)sample[0x3f] << 8));
+        if ((sample[0x40] & 0x80U) == 0 && px < 1920 && py < 1080)
         {
             touch_x = px;
             touch_y = py;
-            touch_finger = (sample[0x24] & 0x80) == 0;
+            touch_finger = true;
             touch_valid = true;
+            touch_sample_at = monotonic_milliseconds();
         }
+    }
+
+    /* The panel click is its own edge-triggered input. Do not synthesize a
+     * release from unrelated controller buttons: that used to fire a preset
+     * as soon as any other button was held. Snapshot contact coordinates into
+     * the queued edge so a fast click keeps the zone from that exact report. */
+    const bool click_down = !neutral && (current & UINT32_C(0x00100000)) != 0;
+    if (click_down != pad_click_down)
+    {
+        queue_touch_click(click_down, touch_finger, touch_x, touch_y);
+        pad_click_down = click_down;
     }
 
     const uint64_t now = monotonic_milliseconds();
@@ -237,6 +259,10 @@ bool radio_input_init(void)
     }
     queue_read = queue_write = 0;
     button_state = 0;
+    pad_click_down = false;
+    touch_finger = false;
+    touch_valid = false;
+    touch_sample_at = 0;
     left_stick_angle = left_stick_accum = 0.0f;
     left_rotary_active = false;
     left_step_at = 0;
@@ -285,7 +311,8 @@ unsigned long long radio_input_milliseconds(void)
 
 bool radio_input_touch(unsigned short *x, unsigned short *y)
 {
-    if (!touch_valid)
+    if (!touch_valid || !touch_finger ||
+        monotonic_milliseconds() - touch_sample_at > UINT64_C(120))
         return false;
     if (x)
         *x = touch_x;
@@ -299,11 +326,14 @@ void radio_input_lightbar(int r, int g, int b)
     if (pad_handle < 0)
         return;
     const unsigned char param[4] = {(unsigned char)r, (unsigned char)g, (unsigned char)b, 0};
-    scePadSetLightBar(pad_handle, param);
+    const int result = scePadSetLightBar(pad_handle, param);
+    if (result < 0)
+        fprintf(stderr, "[ProsperoRadio][lightbar] scePadSetLightBar failed result=%d\n", result);
 }
 
 void radio_input_shutdown(void)
 {
+    radio_input_lightbar(0, 0, 0);
     if (pad_handle >= 0)
     {
         scePadClose(pad_handle);

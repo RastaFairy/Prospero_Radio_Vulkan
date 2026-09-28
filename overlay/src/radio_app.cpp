@@ -11,6 +11,7 @@
 
 #include "radio_app.hpp"
 #include "radio_ime.hpp"
+#include "payload_probe.hpp"
 
 #include <RmlUi/Core/Element.h>
 #include <RmlUi/Core/ElementDocument.h>
@@ -18,10 +19,13 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <strings.h>
 
 extern "C" uint64_t SDL_GetTicks64(void);
 extern "C" uint64_t SDL_GetTicks(void);
@@ -31,11 +35,60 @@ namespace {
 constexpr unsigned kButtonCount = 7;
 constexpr unsigned kListRows = 7;
 constexpr unsigned kInvalidStation = ~0U;
+constexpr char kPresetFileMagic[8] = {'P', 'R', 'S', 'P', 'R', 'S', '0', '2'};
+constexpr char kPresetFileMagicV3[8] = {'P', 'R', 'S', 'P', 'R', 'S', '0', '3'};
+constexpr std::uint32_t kPresetFileVersion = 3;
+constexpr char kAuxFavoriteFileMagic[8] = {'P', 'R', 'A', 'U', 'X', 'F', '0', '1'};
+constexpr std::uint32_t kAuxFavoriteFileVersion = 1;
+constexpr unsigned kAuxMaxStations = 4096;
+
+struct PresetFileV2
+{
+    char magic[8];
+    std::uint32_t version;
+    std::int32_t indices[3];
+    char uuids[3][40];
+};
+static_assert(sizeof(PresetFileV2) == 144, "Unexpected preset file layout");
+
+struct PresetFileV3
+{
+    char magic[8];
+    std::uint32_t version;
+    std::int32_t indices[3];
+    char uuids[3][40];
+    std::uint8_t external[3];
+    radio_station_t external_stations[3];
+};
+
+struct AuxFavoriteFileHeader
+{
+    char magic[8];
+    std::uint32_t version;
+    std::uint32_t count;
+};
 
 void SetText(Rml::ElementDocument *document, const char *id, const char *value)
 {
     if (Rml::Element *element = document->GetElementById(id))
-        element->SetInnerRML(value ? value : "");
+    {
+        /* SetInnerRML parses markup. Station names and M3U metadata are remote
+         * text, so escape them before inserting them into the live document. */
+        const char *text = value ? value : "";
+        std::string escaped;
+        escaped.reserve(std::strlen(text));
+        for (const char *cursor = text; *cursor; ++cursor)
+        {
+            switch (*cursor)
+            {
+            case '&': escaped += "&amp;"; break;
+            case '<': escaped += "&lt;"; break;
+            case '>': escaped += "&gt;"; break;
+            default: escaped += *cursor; break;
+            }
+        }
+        element->SetInnerRML(escaped);
+    }
 }
 
 void SetClass(Rml::ElementDocument *document, const char *id, const char *class_name, bool enabled)
@@ -110,6 +163,146 @@ void CopyString(char *destination, std::size_t capacity, const char *source)
     destination[count] = '\0';
 }
 
+void TrimLine(char *line)
+{
+    if (!line)
+        return;
+    std::size_t length = std::strlen(line);
+    while (length && (line[length - 1] == '\r' || line[length - 1] == '\n' ||
+                      line[length - 1] == ' ' || line[length - 1] == '\t'))
+        line[--length] = '\0';
+    char *begin = line;
+    while (*begin == ' ' || *begin == '\t')
+        ++begin;
+    if (begin != line)
+        std::memmove(line, begin, std::strlen(begin) + 1);
+}
+
+bool IsHttpUrl(const char *text)
+{
+    return text && (strncasecmp(text, "http://", 7) == 0 ||
+                    strncasecmp(text, "https://", 8) == 0);
+}
+
+bool ReadM3uAttribute(const char *extinf, const char *key, char *output,
+                      std::size_t capacity)
+{
+    if (!extinf || !key || !output || capacity == 0 || strncasecmp(extinf, "#EXTINF:", 8) != 0)
+        return false;
+    const char *cursor = extinf + 8;
+    while (*cursor && *cursor != ',')
+    {
+        while (*cursor == ' ' || *cursor == '\t')
+            ++cursor;
+        const char *name = cursor;
+        while (*cursor && *cursor != '=' && *cursor != ',' && *cursor != ' ' && *cursor != '\t')
+            ++cursor;
+        const std::size_t name_length = static_cast<std::size_t>(cursor - name);
+        if (*cursor != '=')
+        {
+            while (*cursor && *cursor != ',' && *cursor != ' ' && *cursor != '\t')
+                ++cursor;
+            continue;
+        }
+        ++cursor;
+        const bool quoted = *cursor == '"';
+        if (quoted)
+            ++cursor;
+        const char *value = cursor;
+        if (quoted)
+        {
+            while (*cursor && *cursor != '"')
+                ++cursor;
+        }
+        else
+        {
+            while (*cursor && *cursor != ',' && *cursor != ' ' && *cursor != '\t')
+                ++cursor;
+        }
+        if (name_length == std::strlen(key) && strncasecmp(name, key, name_length) == 0)
+        {
+            const std::size_t value_length = static_cast<std::size_t>(cursor - value);
+            const std::size_t copy_length = std::min(value_length, capacity - 1);
+            std::memcpy(output, value, copy_length);
+            output[copy_length] = '\0';
+            return true;
+        }
+        if (quoted && *cursor == '"')
+            ++cursor;
+    }
+    output[0] = '\0';
+    return false;
+}
+
+void ReadM3uTitle(const char *extinf, char *output, std::size_t capacity)
+{
+    if (!extinf || !output || capacity == 0)
+        return;
+    bool quoted = false;
+    for (const char *cursor = extinf + 8; *cursor; ++cursor)
+    {
+        if (*cursor == '"')
+            quoted = !quoted;
+        else if (*cursor == ',' && !quoted)
+        {
+            CopyString(output, capacity, cursor + 1);
+            TrimLine(output);
+            return;
+        }
+    }
+    output[0] = '\0';
+}
+
+void MakeAuxStation(const char *url, const char *extinf, radio_station_t *station)
+{
+    if (!url || !station)
+        return;
+    *station = radio_station_t{};
+    CopyString(station->url, sizeof(station->url), url);
+    char title[256]{};
+    char group[128]{};
+    char tvg_name[128]{};
+    char language[96]{};
+    ReadM3uTitle(extinf, title, sizeof(title));
+    (void)ReadM3uAttribute(extinf, "tvg-name", tvg_name, sizeof(tvg_name));
+    (void)ReadM3uAttribute(extinf, "group-title", group, sizeof(group));
+    (void)ReadM3uAttribute(extinf, "tvg-language", language, sizeof(language));
+    if (!*title)
+        CopyString(title, sizeof(title), *tvg_name ? tvg_name : "Internet radio");
+    CopyString(station->name, sizeof(station->name), title);
+    CopyString(station->country_code, sizeof(station->country_code), "M3U");
+    CopyString(station->country, sizeof(station->country), "External list");
+    CopyString(station->tags, sizeof(station->tags), *group ? group : "M3U");
+    CopyString(station->language, sizeof(station->language), language);
+
+    const char *end = std::strpbrk(url, "?#");
+    const std::size_t url_length = end ? static_cast<std::size_t>(end - url) : std::strlen(url);
+    const char *extension = nullptr;
+    for (std::size_t i = 0; i < url_length; ++i)
+        if (url[i] == '.')
+            extension = url + i;
+    if (extension && strncasecmp(extension, ".aac", 4) == 0)
+        CopyString(station->codec, sizeof(station->codec), "AAC");
+    else if (extension && strncasecmp(extension, ".mp3", 4) == 0)
+        CopyString(station->codec, sizeof(station->codec), "MP3");
+    else if (extension && strncasecmp(extension, ".m3u8", 5) == 0)
+    {
+        CopyString(station->codec, sizeof(station->codec), "HLS");
+        station->hls = 1;
+    }
+    else
+        CopyString(station->codec, sizeof(station->codec), "STREAM");
+
+    std::uint64_t hash = UINT64_C(14695981039346656037);
+    for (const unsigned char *byte = reinterpret_cast<const unsigned char *>(url); *byte; ++byte)
+    {
+        hash ^= *byte;
+        hash *= UINT64_C(1099511628211);
+    }
+    std::snprintf(station->uuid, sizeof(station->uuid), "M3U-%016llX",
+                  static_cast<unsigned long long>(hash));
+}
+
 const radio_facet_t *FindFacet(const std::vector<radio_facet_t> &facets, const char *value)
 {
     for (const radio_facet_t &facet : facets)
@@ -125,13 +318,26 @@ bool RadioApp::Initialize(Rml::ElementDocument *document)
     document_ = document;
     if (!document_)
         return false;
+    /* /data is visible to the bundled payload, not to this app sandbox. The
+     * loopback bridge restores durable files before SQLite/preferences open. */
+    const bool payload_ready = radio_payload_bridge_start();
+    if (payload_ready)
+    {
+        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_CATALOG);
+        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_FAVORITES);
+        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_EQ);
+        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_PRESETS);
+        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_AUXFAVORITES);
+        (void)radio_payload_bridge_pull_report();
+        payload_keepalive_tick_ = SDL_GetTicks64();
+    }
+    LoadAuxFavorites();
     radio_service_init();
     service_started_ = true;
     RebuildFacets();
     genre_total_ = static_cast<unsigned>(genre_facets_.size());
     ApplyVolumeFrame();
     ApplyTunerFrame();
-    LoadPresets();
     {
         std::FILE *f = std::fopen("/download0/radio-eq.txt", "rb");
         if (f)
@@ -148,20 +354,35 @@ bool RadioApp::Initialize(Rml::ElementDocument *document)
     }
     ApplyButtons();
     BuildList();
+    LoadPresets();
+    ApplyPresetIndicators();
+    RefreshHeadphoneState();
     RefreshHome();
     RefreshList();
     RefreshGenres();
     RefreshSettings();
+    eq_preset_ = radio_service_eq_preset();
+    RefreshEq();
     return true;
 }
 
 void RadioApp::Shutdown()
 {
+    /* Release the payload-owned LAN socket before shutting down the bridge. */
+    (void)radio_payload_bridge_aux_stop();
     if (service_started_)
     {
         radio_service_shutdown();
         service_started_ = false;
     }
+    /* Shutdown waits for an active catalog refresh, so the final snapshot
+     * cannot race SQLite writes and includes any last-minute preference edit. */
+    (void)radio_payload_bridge_push(RADIO_PAYLOAD_CATALOG);
+    (void)radio_payload_bridge_push(RADIO_PAYLOAD_FAVORITES);
+    (void)radio_payload_bridge_push(RADIO_PAYLOAD_EQ);
+    (void)radio_payload_bridge_push(RADIO_PAYLOAD_PRESETS);
+    (void)radio_payload_bridge_push(RADIO_PAYLOAD_AUXFAVORITES);
+    radio_payload_bridge_shutdown();
     document_ = nullptr;
 }
 
@@ -184,40 +405,8 @@ void RadioApp::RebuildFacets()
     };
     load(RADIO_FACET_GENRE, genre_facets_);
 
-    if (!genre_facets_.empty())
-        return;
-
-    auto add = [](std::vector<radio_facet_t> &facets, const char *value)
-    {
-        if (!*value)
-            return;
-        for (radio_facet_t &facet : facets)
-        {
-            if (std::strcmp(facet.value, value) == 0)
-            {
-                ++facet.station_count;
-                return;
-            }
-        }
-        if (facets.size() >= RADIO_MAX_FACETS)
-            return;
-        radio_facet_t facet{};
-        CopyString(facet.value, sizeof(facet.value), value);
-        CopyString(facet.label, sizeof(facet.label), value);
-        facet.station_count = 1;
-        facets.push_back(facet);
-    };
-    radio_service_status_t status{};
-    radio_service_get_status(&status);
-    for (unsigned i = 0; i < status.station_count; ++i)
-    {
-        radio_station_t station{};
-        if (!radio_service_get_station(i, &station))
-            continue;
-        char value[64];
-        FirstValue(station.tags, value, sizeof(value));
-        add(genre_facets_, value);
-    }
+    /* Use the precomputed SQLite facets. A fallback scan through every
+     * station becomes thousands of per-row queries for a full catalog. */
     std::sort(genre_facets_.begin(), genre_facets_.end(),
               [](const radio_facet_t &left, const radio_facet_t &right)
               { return left.station_count > right.station_count; });
@@ -275,17 +464,29 @@ void RadioApp::ApplyButtons()
 
 void RadioApp::PressButton(unsigned index)
 {
+    if (mode_ == Mode::Aux && index != 3U)
+    {
+        const bool stopped = radio_payload_bridge_aux_stop();
+        std::fprintf(stderr, "[ProsperoRadio][AUX] stop on view exit %s\n",
+                     stopped ? "PASS" : "FAIL");
+    }
     switch (index)
     {
     case 0: // POWER — fade del LCD y salida cruda (sin teardown de libc)
         if (poweroff_ticks_ < 0)
         {
+            (void)radio_payload_bridge_aux_stop();
             poweroff_ticks_ = 36;
             SetClass(document_, "display", "dying", true);
             SetText(document_, "home-status", "APAGANDO");
         }
         return;
     case 1: // RADIO
+        /* Import the durable AUX playlist before showing the source cycle.
+         * This lets RADIO -> LEFT/RIGHT reach M3U directly after an upload or
+         * application restart, without requiring the separate BARRIDO screen. */
+        if (radio_payload_bridge_fetch_aux())
+            (void)ScanAuxPlaylist();
         mode_ = Mode::List;
         list_kind_ = ListKind::Radio;
         list_start_ = list_cursor_ = 0;
@@ -294,6 +495,8 @@ void RadioApp::PressButton(unsigned index)
         ApplyButtons();
         break;
     case 2: // FAVORITES
+        if (radio_payload_bridge_fetch_aux())
+            (void)ScanAuxPlaylist();
         mode_ = Mode::List;
         list_kind_ = ListKind::Favorites;
         list_start_ = list_cursor_ = 0;
@@ -301,23 +504,34 @@ void RadioApp::PressButton(unsigned index)
         RefreshList();
         ApplyButtons();
         break;
-    case 3: // BARRIDO — reescanea el fichero subido por AUX
-        mode_ = Mode::Barrido;
-        radio_service_aux_start();
-        SetText(document_, "barrido-status",
-                radio_service_aux_stations() >= 0
-                    ? "LISTA CARGADA EN MEMORIA - LISTA PARA REPRODUCIR"
-                    : "SIN LISTAS - ENTRA POR AUX Y ENVIA UNA M3U");
-        ApplyButtons();
-        break;
-    case 4: // AUX — servidor HTTP de listas en el puerto 7000
+    case 3: // AUX — servidor HTTP de listas en el puerto 7000
         mode_ = Mode::Aux;
         radio_service_aux_start();
         RefreshAuxPanel();
         ApplyButtons();
         break;
+    case 4: // BARRIDO — revisa la lista subida desde AUX
+        mode_ = Mode::Barrido;
+        {
+            const bool fetched = radio_payload_bridge_fetch_aux();
+            const unsigned stations = fetched ? ScanAuxPlaylist() : 0U;
+            char message[112];
+            if (fetched && stations > 0)
+                std::snprintf(message, sizeof(message), "M3U LISTA | %u EMISORAS | CROSS: ABRIR", stations);
+            else if (fetched)
+                CopyString(message, sizeof(message), "M3U RECIBIDA, PERO NO CONTIENE URLS HTTP VALIDAS");
+            else
+                CopyString(message, sizeof(message), "SIN M3U EN /DATA/RADIO - ENTRA POR AUX");
+            SetText(document_, "barrido-status", message);
+            std::fprintf(stderr, "[ProsperoRadio][AUX] BARRIDO fetch=%s parsed_entries=%u\n",
+                         fetched ? "PASS" : "FAIL", stations);
+        }
+        ApplyButtons();
+        break;
     case 5: // EQ — superficie visible; DSP de bandas en v027
         mode_ = Mode::Eq;
+        eq_preset_ = radio_service_eq_preset();
+        RefreshEq();
         ApplyButtons();
         break;
     case 6: // PLAY / PAUSE
@@ -326,8 +540,13 @@ void RadioApp::PressButton(unsigned index)
         radio_service_get_status(&status);
         if (PlaybackActive(status.playback_state))
             radio_service_stop();
-        else if (status.station_count)
-            PlayIndex(tuned_index_);
+        else if ((tuned_is_aux_ && tuned_station_valid_) || status.station_count)
+        {
+            if (tuned_is_aux_)
+                (void)radio_service_play_external(&tuned_station_);
+            else
+                PlayIndex(tuned_index_);
+        }
         break;
     }
     default:
@@ -354,6 +573,8 @@ void RadioApp::AdjustVolume(int direction)
 void RadioApp::TuneStation(int direction)
 {
     preset_active_ = -1;
+        tuned_is_aux_ = false;
+    ApplyPresetIndicators();
     radio_service_status_t status{};
     radio_service_get_status(&status);
     if (status.station_count == 0U)
@@ -364,6 +585,7 @@ void RadioApp::TuneStation(int direction)
         direction < 0 ? (tuned_index_ == 0U ? status.station_count - 1U : tuned_index_ - 1U)
                       : (tuned_index_ + 1U == status.station_count ? 0U : tuned_index_ + 1U);
     tuned_index_ = next;
+    tuned_station_valid_ = radio_service_get_station(tuned_index_, &tuned_station_);
     tuner_state_ = direction < 0 ? 1U : 2U;
     ApplyTunerFrame();
     if (PlaybackActive(status.playback_state))
@@ -378,24 +600,117 @@ void RadioApp::PlayIndex(unsigned index)
     radio_station_t station{};
     if (!radio_service_get_station(index, &station))
         return;
+    tuned_station_ = station;
+    tuned_station_valid_ = true;
+    tuned_is_aux_ = false;
+    preset_active_ = -1;
+    ApplyPresetIndicators();
+    pending_play_uuid_[0] = '\0';
+    pending_play_index_ = InvalidStation;
+    pending_play_external_ = false;
     radio_service_status_t status{};
     radio_service_get_status(&status);
     if (PlaybackActive(status.playback_state))
     {
         if (radio_service_station_is_playing(index))
             return;
-        pending_play_uuid_[0] = '\0';
         CopyString(pending_play_uuid_, sizeof(pending_play_uuid_), station.uuid);
+        pending_play_index_ = index;
         radio_service_stop();
         return;
     }
     radio_service_play(index);
 }
 
+void RadioApp::PlayAuxStation(const radio_station_t &station)
+{
+    if (!station.uuid[0] || !IsHttpUrl(station.url))
+        return;
+    tuned_station_ = station;
+    tuned_station_valid_ = true;
+    tuned_is_aux_ = true;
+    preset_active_ = -1;
+    ApplyPresetIndicators();
+    pending_play_uuid_[0] = '\0';
+    pending_play_index_ = InvalidStation;
+    pending_play_external_ = false;
+
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    if (PlaybackActive(status.playback_state))
+    {
+        radio_station_t playing{};
+        if (radio_service_get_playing_station(&playing) &&
+            std::strcmp(playing.uuid, station.uuid) == 0)
+            return;
+        pending_play_station_ = station;
+        pending_play_external_ = true;
+        radio_service_stop();
+        return;
+    }
+    if (!radio_service_play_external(&station))
+        SetText(document_, "home-status", "NO SE PUDO ABRIR LA URL M3U");
+}
+
 /* --- list mode -------------------------------------------------------- */
 
 void RadioApp::BuildList()
 {
+    for (unsigned &entry : list_indices_)
+        entry = kInvalidStation;
+    std::fill(list_aux_entries_, list_aux_entries_ + kListRows, false);
+    if (list_kind_ == ListKind::Auxiliary)
+    {
+        list_total_ = static_cast<unsigned>(aux_stations_.size());
+        if (list_total_ && list_start_ >= list_total_)
+        {
+            list_start_ = (list_total_ - 1U) / kListRows * kListRows;
+            list_cursor_ = 0;
+        }
+        for (unsigned row = 0; row < kListRows && list_start_ + row < list_total_; ++row)
+        {
+            list_indices_[row] = list_start_ + row;
+            list_aux_entries_[row] = true;
+        }
+        return;
+    }
+    if (list_kind_ == ListKind::Favorites)
+    {
+        const unsigned radio_count = radio_service_get_favorite_count();
+        const unsigned aux_count = static_cast<unsigned>(aux_favorites_.size());
+        list_total_ = radio_count + aux_count;
+        if (list_total_ && list_start_ >= list_total_)
+        {
+            list_start_ = (list_total_ - 1U) / kListRows * kListRows;
+            list_cursor_ = 0;
+        }
+        const unsigned radio_rows = list_start_ < radio_count
+                                        ? std::min(kListRows, radio_count - list_start_)
+                                        : 0U;
+        if (radio_rows)
+        {
+            unsigned actual_total = 0;
+            if (!radio_service_query_page(nullptr, RADIO_CATALOG_ORDER_POPULAR, true,
+                                          list_start_, radio_rows, &actual_total))
+            {
+                list_total_ = aux_count;
+                list_start_ = list_cursor_ = 0;
+                return;
+            }
+        }
+        for (unsigned row = 0; row < kListRows && list_start_ + row < list_total_; ++row)
+        {
+            const unsigned absolute = list_start_ + row;
+            if (absolute < radio_count)
+                list_indices_[row] = absolute;
+            else
+            {
+                list_indices_[row] = absolute - radio_count;
+                list_aux_entries_[row] = true;
+            }
+        }
+        return;
+    }
     radio_catalog_query_t query{};
     radio_catalog_query_t *query_ptr = nullptr;
     if (*filter_genre_)
@@ -413,8 +728,6 @@ void RadioApp::BuildList()
         list_start_ = (list_total_ - 1U) / kListRows * kListRows;
         list_cursor_ = 0;
     }
-    for (unsigned &entry : list_indices_)
-        entry = kInvalidStation;
     if (!loaded)
     {
         list_total_ = 0;
@@ -430,14 +743,25 @@ void RadioApp::BuildList()
 
 void RadioApp::RefreshList()
 {
-    static const char *titles[] = {"RADIO BROWSER", "FAVORITES"};
-    SetText(document_, "list-title",
-            titles[list_kind_ == ListKind::Favorites ? 1 : 0]);
+    if (list_total_ == 0U)
+        list_cursor_ = 0U;
+    else if (list_start_ + list_cursor_ >= list_total_)
+        list_cursor_ = std::min(kListRows - 1U, list_total_ - list_start_ - 1U);
+    const char *title = list_kind_ == ListKind::Favorites ? "FAVORITES"
+                        : list_kind_ == ListKind::Auxiliary ? "AUX M3U"
+                                                            : "RADIO BROWSER";
+    SetText(document_, "list-title", title);
+    SetClass(document_, "list-tab-radio", "active", list_kind_ == ListKind::Radio);
+    SetClass(document_, "list-tab-favorites", "active", list_kind_ == ListKind::Favorites);
+    SetClass(document_, "list-tab-aux", "active", list_kind_ == ListKind::Auxiliary);
     char text[96];
     if (list_total_ == 0U)
     {
-        SetText(document_, "list-status",
-                list_kind_ == ListKind::Favorites ? "No saved stations yet" : "Catalog loading");
+        SetText(document_, "list-status", list_kind_ == ListKind::Favorites
+                                               ? "SIN FAVORITOS  |  □ GUARDA"
+                                           : list_kind_ == ListKind::Auxiliary
+                                               ? "AUX VACIA  |  ENTRA POR AUX"
+                                               : "CATALOGO CARGANDO");
         for (unsigned row = 0; row < kListRows; ++row)
         {
             char id[24];
@@ -446,8 +770,8 @@ void RadioApp::RefreshList()
         }
         return;
     }
-    std::snprintf(text, sizeof(text), "%u / %u STATIONS", list_start_ + list_cursor_ + 1U,
-                  list_total_);
+    std::snprintf(text, sizeof(text), "%u / %u  |  ◀ ▶ FUENTE",
+                  list_start_ + list_cursor_ + 1U, list_total_);
     SetText(document_, "list-status", text);
     for (unsigned row = 0; row < kListRows; ++row)
     {
@@ -460,7 +784,19 @@ void RadioApp::RefreshList()
         }
         SetVisible(document_, id, true);
         radio_station_t station{};
-        if (!radio_service_get_station(list_indices_[row], &station))
+        bool have_station = false;
+        if (list_aux_entries_[row])
+        {
+            const auto &source = list_kind_ == ListKind::Favorites ? aux_favorites_ : aux_stations_;
+            if (list_indices_[row] < source.size())
+            {
+                station = source[list_indices_[row]];
+                have_station = true;
+            }
+        }
+        else
+            have_station = radio_service_get_station(list_indices_[row], &station);
+        if (!have_station)
         {
             SetVisible(document_, id, false);
             continue;
@@ -472,12 +808,17 @@ void RadioApp::RefreshList()
         std::snprintf(id, sizeof(id), "list-meta-%u", row);
         char tag[40];
         FirstValue(station.tags, tag, sizeof(tag));
-        std::snprintf(text, sizeof(text), "%s  |  %s %u kbps",
-                      *station.country_code ? station.country_code : "WW", *tag ? tag : "Music",
-                      station.bitrate);
+        if (list_aux_entries_[row])
+            std::snprintf(text, sizeof(text), "M3U  |  %.24s  |  %s", *tag ? tag : "Radio",
+                          station.codec);
+        else
+            std::snprintf(text, sizeof(text), "%s  |  %s %u kbps",
+                          *station.country_code ? station.country_code : "WW", *tag ? tag : "Music",
+                          station.bitrate);
         SetText(document_, id, text);
         std::snprintf(id, sizeof(id), "list-fav-%u", row);
-        SetVisible(document_, id, radio_service_is_favorite(station.uuid));
+        SetVisible(document_, id, list_aux_entries_[row] ? IsAuxFavorite(station.uuid)
+                                                          : radio_service_is_favorite(station.uuid));
         std::snprintf(id, sizeof(id), "list-row-%u", row);
         SetClass(document_, id, "cursor", list_cursor_ == row);
     }
@@ -516,9 +857,19 @@ void RadioApp::RefreshHome()
     radio_service_status_t status{};
     radio_service_get_status(&status);
     radio_station_t station{};
-    const bool have = radio_service_get_station(tuned_index_, &station);
+    bool have = PlaybackActive(status.playback_state) &&
+                radio_service_get_playing_station(&station);
+    if (!have && tuned_station_valid_)
+    {
+        station = tuned_station_;
+        have = true;
+    }
+    if (!have)
+        have = radio_service_get_station(tuned_index_, &station);
     if (have)
     {
+        tuned_station_ = station;
+        tuned_station_valid_ = true;
         SetText(document_, "home-name", station.name);
         char tag[40];
         FirstValue(station.tags, tag, sizeof(tag));
@@ -894,6 +1245,46 @@ void RadioApp::ApplyTunerFrame()
 
 void RadioApp::HandleInput(const radio_input_event_t &event)
 {
+    if (event.key == RADIO_INPUT_PAD_CLICK)
+    {
+        if (event.pressed)
+        {
+            const unsigned short tx = event.touch_x;
+            const unsigned short ty = event.touch_y;
+            touch_hold_active_ = event.touch_contact;
+            touch_fired_ = false;
+            if (touch_hold_active_)
+            {
+                /* Lock the physical zone at click-down; sliding afterwards
+                 * cannot change which preset is recalled or overwritten. */
+                touch_zone_ = tx < 640 ? 0 : tx < 1280 ? 1 : 2;
+                touch_start_ = radio_input_milliseconds();
+                std::fprintf(stderr, "[ProsperoRadio][touch] click-down x=%u y=%u zone=P%u\n",
+                             static_cast<unsigned>(tx), static_cast<unsigned>(ty),
+                             static_cast<unsigned>(touch_zone_ + 1));
+            }
+            else
+                std::fprintf(stderr, "[ProsperoRadio][touch] click-down without live contact; ignored\n");
+        }
+        else
+        {
+            if (touch_hold_active_ && !touch_fired_ && event.touch_contact)
+            {
+                std::fprintf(stderr, "[ProsperoRadio][touch] short-click recall zone=P%u\n",
+                             static_cast<unsigned>(touch_zone_ + 1));
+                RecallPreset(touch_zone_);
+            }
+            else if (touch_fired_)
+                std::fprintf(stderr, "[ProsperoRadio][touch] long-click save complete zone=P%u\n",
+                             static_cast<unsigned>(touch_zone_ + 1));
+            else
+                std::fprintf(stderr,
+                             "[ProsperoRadio][touch] click released without live contact; gesture cancelled\n");
+            touch_hold_active_ = false;
+            touch_fired_ = false;
+        }
+        return;
+    }
     if (!event.pressed)
         return;
     /* EQ takes the left dial first: it edits the selected band's gain. */
@@ -909,28 +1300,6 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
     if (event.key == RADIO_INPUT_VOLUME_UP || event.key == RADIO_INPUT_VOLUME_DOWN)
     {
         AdjustVolume(event.key == RADIO_INPUT_VOLUME_UP ? 1 : -1);
-        return;
-    }
-
-    if (event.key == RADIO_INPUT_PAD_CLICK)
-    {
-        /* Panel tactil: dedo en zona + click corto = preset, click 3 s = graba. */
-        if (event.pressed)
-        {
-            unsigned short tx = 0, ty = 0;
-            if (radio_input_touch(&tx, &ty))
-            {
-                touch_zone_ = tx < 640 ? 0 : tx < 1280 ? 1 : 2;
-                touch_hold_active_ = true;
-                touch_fired_ = false;
-                touch_start_ = radio_input_milliseconds();
-            }
-        }
-        else if (touch_hold_active_ && !touch_fired_)
-        {
-            touch_hold_active_ = false;
-            RecallPreset(touch_zone_);
-        }
         return;
     }
 
@@ -969,7 +1338,7 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
         }
         if (event.key == RADIO_INPUT_CROSS)
         {
-            eq_preset_ = (eq_preset_ + 1) % 4;
+            eq_preset_ = eq_preset_ < 0 ? 0 : (eq_preset_ + 1) % 4;
             radio_service_eq_preset(eq_preset_);
             SaveEq();
             RefreshEq();
@@ -980,8 +1349,25 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
 
     if (mode_ == Mode::Aux || mode_ == Mode::Barrido)
     {
+        if (mode_ == Mode::Barrido && event.key == RADIO_INPUT_CROSS &&
+            !aux_stations_.empty())
+        {
+            mode_ = Mode::List;
+            list_kind_ = ListKind::Auxiliary;
+            list_start_ = list_cursor_ = 0;
+            BuildList();
+            RefreshList();
+            ApplyButtons();
+            return;
+        }
         if (event.key == RADIO_INPUT_TRIANGLE || event.key == RADIO_INPUT_CIRCLE)
         {
+            if (mode_ == Mode::Aux)
+            {
+                const bool stopped = radio_payload_bridge_aux_stop();
+                std::fprintf(stderr, "[ProsperoRadio][AUX] stop on back %s\n",
+                             stopped ? "PASS" : "FAIL");
+            }
             mode_ = Mode::Home;
             ApplyButtons();
             RefreshHome();
@@ -1075,7 +1461,24 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
         }
         if (event.key == RADIO_INPUT_LEFT || event.key == RADIO_INPUT_RIGHT)
         {
-            list_kind_ = list_kind_ == ListKind::Radio ? ListKind::Favorites : ListKind::Radio;
+            if (event.key == RADIO_INPUT_RIGHT)
+            {
+                if (list_kind_ == ListKind::Radio)
+                    list_kind_ = ListKind::Favorites;
+                else if (list_kind_ == ListKind::Favorites)
+                    list_kind_ = ListKind::Auxiliary;
+                else
+                    list_kind_ = ListKind::Radio;
+            }
+            else
+            {
+                if (list_kind_ == ListKind::Radio)
+                    list_kind_ = ListKind::Auxiliary;
+                else if (list_kind_ == ListKind::Favorites)
+                    list_kind_ = ListKind::Radio;
+                else
+                    list_kind_ = ListKind::Favorites;
+            }
             list_start_ = list_cursor_ = 0;
             BuildList();
             RefreshList();
@@ -1086,17 +1489,45 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
         {
             if (list_indices_[list_cursor_] != kInvalidStation)
             {
-                tuned_index_ = list_indices_[list_cursor_];
-                PlayIndex(tuned_index_);
+                if (list_aux_entries_[list_cursor_])
+                {
+                    const auto &source = list_kind_ == ListKind::Favorites ? aux_favorites_ : aux_stations_;
+                    const unsigned index = list_indices_[list_cursor_];
+                    if (index < source.size())
+                        PlayAuxStation(source[index]);
+                }
+                else
+                {
+                    tuned_index_ = list_indices_[list_cursor_];
+                    PlayIndex(tuned_index_);
+                }
                 RefreshHome();
             }
             return;
         }
         if (event.key == RADIO_INPUT_SQUARE)
         {
-            if (list_indices_[list_cursor_] != kInvalidStation)
+            if (list_aux_entries_[list_cursor_])
+            {
+                const auto &source = list_kind_ == ListKind::Favorites ? aux_favorites_ : aux_stations_;
+                const unsigned index = list_indices_[list_cursor_];
+                if (index < source.size())
+                {
+                    const radio_station_t station = source[index];
+                    const bool was_favorite = IsAuxFavorite(station.uuid);
+                    if (ToggleAuxFavorite(station))
+                        SetText(document_, "home-status", was_favorite ? "AUX FAVORITO ELIMINADO"
+                                                                        : "AUX FAVORITO GUARDADO");
+                    else
+                        SetText(document_, "home-status", "NO SE PUDO GUARDAR FAVORITO AUX");
+                }
+                BuildList();
+                RefreshList();
+            }
+            else if (list_indices_[list_cursor_] != kInvalidStation)
             {
                 radio_service_toggle_favorite(list_indices_[list_cursor_]);
+                BuildList();
                 RefreshList();
             }
             return;
@@ -1133,6 +1564,16 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
     }
     if (event.key == RADIO_INPUT_SQUARE)
     {
+        if (tuned_is_aux_)
+        {
+            const bool was_favorite = IsAuxFavorite(tuned_station_.uuid);
+            if (ToggleAuxFavorite(tuned_station_))
+                SetText(document_, "home-status", was_favorite ? "AUX FAVORITO ELIMINADO"
+                                                                : "AUX FAVORITO GUARDADO");
+            else
+                SetText(document_, "home-status", "NO SE PUDO GUARDAR FAVORITO AUX");
+            return;
+        }
         radio_service_toggle_favorite(tuned_index_);
         return;
     }
@@ -1156,14 +1597,23 @@ void RadioApp::Poll()
         }
         return;
     }
-    if (touch_hold_active_ && !touch_fired_ &&
-        radio_input_milliseconds() - touch_start_ >= 3000)
+    if (touch_hold_active_ && !touch_fired_)
     {
-        touch_fired_ = true;
-        touch_hold_active_ = false;
-        StorePreset(touch_zone_);
+        unsigned short tx = 0, ty = 0;
+        if (!radio_input_touch(&tx, &ty))
+        {
+            /* Lifting off before the click ends cancels the pending gesture. */
+            touch_hold_active_ = false;
+        }
+        else if (radio_input_milliseconds() - touch_start_ >= 3000)
+        {
+            touch_fired_ = true;
+            touch_hold_active_ = false;
+            StorePreset(touch_zone_);
+        }
     }
     LightbarTick();
+    RefreshHeadphoneState();
     radio_service_status_t status{};
     radio_service_get_status(&status);
     if (!have_last_status_ || status.catalog_generation != last_status_.catalog_generation ||
@@ -1179,28 +1629,48 @@ void RadioApp::Poll()
         RefreshList();
         RefreshHome();
     }
-    if (*pending_play_uuid_ && status.playback_state == RADIO_PLAYBACK_STOPPED)
+    if ((pending_play_external_ || *pending_play_uuid_) &&
+        status.playback_state == RADIO_PLAYBACK_STOPPED)
     {
+        if (pending_play_external_)
+        {
+            radio_station_t pending = pending_play_station_;
+            pending_play_external_ = false;
+            pending_play_station_ = radio_station_t{};
+            if (!radio_service_play_external(&pending))
+                SetText(document_, "home-status", "NO SE PUDO ABRIR LA URL M3U");
+            radio_service_get_status(&status);
+        }
+        else
+        {
         char pending_uuid[sizeof(pending_play_uuid_)]{};
         CopyString(pending_uuid, sizeof(pending_uuid), pending_play_uuid_);
         pending_play_uuid_[0] = '\0';
-        for (unsigned i = 0; i < status.station_count; ++i)
+        const unsigned pending_index = pending_play_index_;
+        pending_play_index_ = InvalidStation;
+        radio_station_t station{};
+        if (pending_index != InvalidStation &&
+            radio_service_get_station(pending_index, &station) &&
+            std::strcmp(station.uuid, pending_uuid) == 0)
         {
-            radio_station_t station{};
-            if (radio_service_get_station(i, &station) &&
-                std::strcmp(station.uuid, pending_uuid) == 0)
-            {
-                radio_service_play(i);
-                radio_service_get_status(&status);
-                break;
-            }
+            radio_service_play(pending_index);
+            radio_service_get_status(&status);
+        }
+        else if (pending_uuid[0] != '\0')
+        {
+            (void)radio_service_play_uuid(pending_uuid);
+            radio_service_get_status(&status);
+        }
         }
     }
     if (!have_last_status_ || status.playback_state != last_status_.playback_state ||
         status.playing_index != last_status_.playing_index ||
         status.sample_rate != last_status_.sample_rate ||
         status.channels != last_status_.channels || status.error_code != last_status_.error_code)
+    {
         RefreshStatus();
+        RefreshHome();
+    }
     if (!have_last_status_ || status.catalog_state != last_status_.catalog_state ||
         status.refreshing != last_status_.refreshing ||
         status.searching != last_status_.searching ||
@@ -1213,6 +1683,18 @@ void RadioApp::Poll()
     UpdateEqualizer(status);
     last_status_ = status;
     have_last_status_ = true;
+
+    const unsigned long long now = SDL_GetTicks64();
+    if (preset_confirm_zone_ >= 0 && radio_input_milliseconds() >= preset_confirm_until_)
+    {
+        preset_confirm_zone_ = -1;
+        ApplyPresetIndicators();
+    }
+    if (payload_keepalive_tick_ != 0 && now - payload_keepalive_tick_ >= 30000U)
+    {
+        (void)radio_payload_bridge_keepalive();
+        payload_keepalive_tick_ = now;
+    }
 }
 
 void RadioApp::UpdateEqualizer(const radio_service_status_t &status)
@@ -1239,79 +1721,407 @@ void RadioApp::SaveEq()
     {
         for (int b = 0; b < 5; ++b)
             std::fprintf(file, "%d%c", radio_service_eq_gain(b), b == 4 ? '\n' : ' ');
-        std::fclose(file);
+        if (std::fclose(file) == 0)
+            (void)radio_payload_bridge_push(RADIO_PAYLOAD_EQ);
     }
+}
+
+bool RadioApp::IsAuxFavorite(const char *uuid) const
+{
+    if (!uuid || !*uuid)
+        return false;
+    return std::any_of(aux_favorites_.begin(), aux_favorites_.end(),
+                       [uuid](const radio_station_t &station)
+                       { return std::strcmp(station.uuid, uuid) == 0; });
+}
+
+void RadioApp::LoadAuxFavorites()
+{
+    aux_favorites_.clear();
+    std::FILE *file = std::fopen("/download0/radio-aux-favorites.bin", "rb");
+    if (!file)
+        return;
+    AuxFavoriteFileHeader header{};
+    std::vector<radio_station_t> loaded;
+    bool valid = std::fread(&header, sizeof(header), 1, file) == 1 &&
+                 std::memcmp(header.magic, kAuxFavoriteFileMagic, sizeof(header.magic)) == 0 &&
+                 header.version == kAuxFavoriteFileVersion && header.count <= kAuxMaxStations;
+    if (valid)
+    {
+        loaded.reserve(header.count);
+        for (std::uint32_t index = 0; index < header.count; ++index)
+        {
+            radio_station_t station{};
+            if (std::fread(&station, sizeof(station), 1, file) != 1 ||
+                std::memchr(station.uuid, '\0', sizeof(station.uuid)) == nullptr ||
+                !station.uuid[0] || std::memchr(station.name, '\0', sizeof(station.name)) == nullptr ||
+                std::memchr(station.url, '\0', sizeof(station.url)) == nullptr ||
+                !IsHttpUrl(station.url))
+            {
+                valid = false;
+                break;
+            }
+            loaded.push_back(station);
+        }
+        if (valid && std::fgetc(file) != EOF)
+            valid = false;
+    }
+    std::fclose(file);
+    if (!valid)
+    {
+        std::fprintf(stderr, "[ProsperoRadio][AUX] favorites file rejected; source preserved\n");
+        return;
+    }
+    aux_favorites_.swap(loaded);
+    std::fprintf(stderr, "[ProsperoRadio][AUX] favorites loaded=%u\n",
+                 static_cast<unsigned>(aux_favorites_.size()));
+}
+
+bool RadioApp::SaveAuxFavorites()
+{
+    if (aux_favorites_.size() > kAuxMaxStations)
+        return false;
+    AuxFavoriteFileHeader header{};
+    std::memcpy(header.magic, kAuxFavoriteFileMagic, sizeof(header.magic));
+    header.version = kAuxFavoriteFileVersion;
+    header.count = static_cast<std::uint32_t>(aux_favorites_.size());
+    constexpr char path[] = "/download0/radio-aux-favorites.bin";
+    constexpr char temporary[] = "/download0/radio-aux-favorites.bin.tmp";
+    std::FILE *file = std::fopen(temporary, "wb");
+    if (!file)
+        return false;
+    bool wrote = std::fwrite(&header, sizeof(header), 1, file) == 1;
+    for (const radio_station_t &station : aux_favorites_)
+        wrote = wrote && std::fwrite(&station, sizeof(station), 1, file) == 1;
+    wrote = wrote && std::fflush(file) == 0;
+    const bool closed = std::fclose(file) == 0;
+    if (!wrote || !closed || std::rename(temporary, path) != 0)
+    {
+        std::remove(temporary);
+        return false;
+    }
+    return radio_payload_bridge_push(RADIO_PAYLOAD_AUXFAVORITES);
+}
+
+bool RadioApp::ToggleAuxFavorite(const radio_station_t &station)
+{
+    if (!station.uuid[0] || !IsHttpUrl(station.url))
+        return false;
+    const auto found = std::find_if(aux_favorites_.begin(), aux_favorites_.end(),
+                                    [&station](const radio_station_t &saved)
+                                    { return std::strcmp(saved.uuid, station.uuid) == 0; });
+    if (found != aux_favorites_.end())
+        aux_favorites_.erase(found);
+    else
+    {
+        if (aux_favorites_.size() >= kAuxMaxStations)
+            return false;
+        aux_favorites_.push_back(station);
+    }
+    return SaveAuxFavorites();
 }
 
 void RadioApp::LoadPresets()
 {
+    presets_[0] = presets_[1] = presets_[2] = -1;
+    std::memset(preset_uuids_, 0, sizeof(preset_uuids_));
+    std::memset(preset_saved_, 0, sizeof(preset_saved_));
+    std::memset(preset_external_, 0, sizeof(preset_external_));
+    std::memset(preset_external_station_, 0, sizeof(preset_external_station_));
     std::FILE *file = std::fopen("/download0/radio-presets.bin", "rb");
     if (file)
     {
-        if (std::fread(presets_, sizeof(presets_), 1, file) != 1)
-            presets_[0] = presets_[1] = presets_[2] = -1;
+        PresetFileV3 saved{};
+        const bool loaded_v3 = std::fread(&saved, sizeof(saved), 1, file) == 1 &&
+                               std::memcmp(saved.magic, kPresetFileMagicV3, sizeof(saved.magic)) == 0 &&
+                               saved.version == kPresetFileVersion;
+        if (loaded_v3)
+        {
+            for (int zone = 0; zone < 3; ++zone)
+            {
+                if (saved.external[zone] > 1U || saved.indices[zone] < -1 ||
+                    std::memchr(saved.uuids[zone], '\0', sizeof(saved.uuids[zone])) == nullptr)
+                    continue;
+                if (saved.external[zone])
+                {
+                    const radio_station_t &station = saved.external_stations[zone];
+                    if (std::memchr(station.uuid, '\0', sizeof(station.uuid)) == nullptr ||
+                        std::memchr(station.url, '\0', sizeof(station.url)) == nullptr ||
+                        !station.uuid[0] || !IsHttpUrl(station.url))
+                        continue;
+                    preset_external_[zone] = true;
+                    preset_external_station_[zone] = station;
+                    presets_[zone] = -1;
+                    CopyString(preset_uuids_[zone], sizeof(preset_uuids_[zone]), station.uuid);
+                    preset_saved_[zone] = true;
+                }
+                else if (saved.indices[zone] >= 0 && saved.uuids[zone][0])
+                {
+                    presets_[zone] = static_cast<int>(saved.indices[zone]);
+                    CopyString(preset_uuids_[zone], sizeof(preset_uuids_[zone]), saved.uuids[zone]);
+                    preset_saved_[zone] = true;
+                }
+            }
+        }
+        else
+        {
+            std::rewind(file);
+            PresetFileV2 old{};
+            const bool loaded_v2 = std::fread(&old, sizeof(old), 1, file) == 1 &&
+                                   std::memcmp(old.magic, kPresetFileMagic, sizeof(old.magic)) == 0 &&
+                                   old.version == 2U;
+            if (loaded_v2)
+            {
+                for (int zone = 0; zone < 3; ++zone)
+                {
+                    if (old.indices[zone] < 0 ||
+                        std::memchr(old.uuids[zone], '\0', sizeof(old.uuids[zone])) == nullptr ||
+                        !old.uuids[zone][0])
+                        continue;
+                    presets_[zone] = static_cast<int>(old.indices[zone]);
+                    CopyString(preset_uuids_[zone], sizeof(preset_uuids_[zone]), old.uuids[zone]);
+                    preset_saved_[zone] = true;
+                }
+            }
+            else
+            {
+                std::rewind(file);
+                int legacy_indices[3] = {-1, -1, -1};
+                if (std::fread(legacy_indices, sizeof(legacy_indices), 1, file) == 1)
+                    for (int zone = 0; zone < 3; ++zone)
+                        if (legacy_indices[zone] >= 0)
+                            presets_[zone] = legacy_indices[zone];
+            }
+        }
         std::fclose(file);
     }
+
+    bool migrated = false;
+    for (int zone = 0; zone < 3; ++zone)
+    {
+        if (preset_saved_[zone] || presets_[zone] < 0)
+            continue;
+        radio_station_t station{};
+        if (radio_service_get_station(static_cast<unsigned>(presets_[zone]), &station) &&
+            station.uuid[0] != '\0')
+        {
+            CopyString(preset_uuids_[zone], sizeof(preset_uuids_[zone]), station.uuid);
+            preset_saved_[zone] = true;
+            migrated = true;
+        }
+    }
+    if (migrated)
+        SavePresets();
 }
 
-void RadioApp::SavePresets()
+bool RadioApp::SavePresets()
 {
-    std::FILE *file = std::fopen("/download0/radio-presets.bin", "wb");
-    if (file)
+    PresetFileV3 saved{};
+    std::memcpy(saved.magic, kPresetFileMagicV3, sizeof(saved.magic));
+    saved.version = kPresetFileVersion;
+    for (int zone = 0; zone < 3; ++zone)
     {
-        std::fwrite(presets_, sizeof(presets_), 1, file);
-        std::fclose(file);
+        saved.indices[zone] = static_cast<std::int32_t>(presets_[zone]);
+        CopyString(saved.uuids[zone], sizeof(saved.uuids[zone]), preset_uuids_[zone]);
+        saved.external[zone] = preset_external_[zone] ? 1U : 0U;
+        if (preset_external_[zone])
+            saved.external_stations[zone] = preset_external_station_[zone];
     }
+    constexpr char path[] = "/download0/radio-presets.bin";
+    constexpr char temporary[] = "/download0/radio-presets.bin.tmp";
+    std::FILE *file = std::fopen(temporary, "wb");
+    if (!file)
+        return false;
+    const bool wrote = std::fwrite(&saved, sizeof(saved), 1, file) == 1 &&
+                       std::fflush(file) == 0;
+    const bool closed = std::fclose(file) == 0;
+    if (!wrote || !closed || std::rename(temporary, path) != 0)
+    {
+        std::remove(temporary);
+        return false;
+    }
+    return radio_payload_bridge_push(RADIO_PAYLOAD_PRESETS);
 }
 
 void RadioApp::StorePreset(int zone)
 {
     if (zone < 0 || zone > 2)
         return;
-    presets_[zone] = static_cast<int>(tuned_index_);
+    radio_station_t station{};
+    if (tuned_is_aux_)
+        station = tuned_station_;
+    else if (!radio_service_get_station(tuned_index_, &station))
+    {
+        SetText(document_, "home-status", "NO SE PUEDE GUARDAR ESTA EMISORA");
+        return;
+    }
+    if (station.uuid[0] == '\0' || !IsHttpUrl(station.url))
+    {
+        SetText(document_, "home-status", "NO SE PUEDE GUARDAR ESTA EMISORA");
+        return;
+    }
+    preset_external_[zone] = tuned_is_aux_;
+    preset_external_station_[zone] = tuned_is_aux_ ? station : radio_station_t{};
+    presets_[zone] = tuned_is_aux_ ? -1 : static_cast<int>(tuned_index_);
+    CopyString(preset_uuids_[zone], sizeof(preset_uuids_[zone]), station.uuid);
+    preset_saved_[zone] = true;
+    tuned_station_ = station;
+    tuned_station_valid_ = true;
     preset_active_ = zone;
-    SavePresets();
-    lb_pulses_left_ = 2 * (zone + 1);
-    SetText(document_, "home-status",
-            zone == 0 ? "P1 MEMORIZADA" : zone == 1 ? "P2 MEMORIZADA" : "P3 MEMORIZADA");
+    const bool persisted = SavePresets();
+    StartPresetFeedback(zone);
+    preset_confirm_zone_ = zone;
+    preset_confirm_until_ = radio_input_milliseconds() + 1200U;
+    ApplyPresetIndicators();
+    const char *slot = zone == 0 ? "P1" : zone == 1 ? "P2" : "P3";
+    char status_text[72];
+    std::snprintf(status_text, sizeof(status_text), "%s %s", slot,
+                  persisted ? "MEMORIZADA" : "GUARDADA LOCAL; ERROR EN /DATA");
+    SetText(document_, "home-status", status_text);
 }
 
 void RadioApp::RecallPreset(int zone)
 {
     if (zone < 0 || zone > 2)
         return;
-    if (presets_[zone] < 0)
+    if (!preset_saved_[zone])
     {
         SetText(document_, "home-status",
                 zone == 0 ? "P1 VACIA" : zone == 1 ? "P2 VACIA" : "P3 VACIA");
         return;
     }
+    radio_station_t station{};
+    const bool external = preset_external_[zone];
+    if (external)
+    {
+        station = preset_external_station_[zone];
+        if (!station.uuid[0] || !IsHttpUrl(station.url))
+        {
+            SetText(document_, "home-status", "EMISORA PRESET NO DISPONIBLE");
+            return;
+        }
+    }
+    else if (preset_uuids_[zone][0] == '\0')
+    {
+        if (presets_[zone] < 0 ||
+            !radio_service_get_station(static_cast<unsigned>(presets_[zone]), &station) ||
+            station.uuid[0] == '\0')
+        {
+            SetText(document_, "home-status", "EMISORA PRESET NO DISPONIBLE");
+            return;
+        }
+        CopyString(preset_uuids_[zone], sizeof(preset_uuids_[zone]), station.uuid);
+        preset_saved_[zone] = true;
+        (void)SavePresets();
+    }
+    else if (!radio_service_get_station_by_uuid(preset_uuids_[zone], &station))
+    {
+        SetText(document_, "home-status", "EMISORA PRESET NO DISPONIBLE");
+        return;
+    }
     preset_active_ = zone;
-    tuned_index_ = static_cast<unsigned>(presets_[zone]);
-    lb_pulses_left_ = 2 * (zone + 1);
-    PlayIndex(tuned_index_);
+    tuned_is_aux_ = external;
+    if (!external && presets_[zone] >= 0)
+        tuned_index_ = static_cast<unsigned>(presets_[zone]);
+    tuned_station_ = station;
+    tuned_station_valid_ = true;
+    StartPresetFeedback(zone);
+    ApplyPresetIndicators();
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    radio_station_t playing{};
+    if (PlaybackActive(status.playback_state))
+    {
+        if (radio_service_get_playing_station(&playing) &&
+            std::strcmp(playing.uuid, preset_uuids_[zone]) == 0)
+        {
+            RefreshHome();
+            return;
+        }
+        pending_play_index_ = InvalidStation;
+        if (external)
+        {
+            pending_play_station_ = station;
+            pending_play_external_ = true;
+            pending_play_uuid_[0] = '\0';
+        }
+        else
+        {
+            CopyString(pending_play_uuid_, sizeof(pending_play_uuid_), preset_uuids_[zone]);
+            pending_play_external_ = false;
+        }
+        radio_service_stop();
+    }
+    else if (!(external ? radio_service_play_external(&station)
+                        : radio_service_play_uuid(preset_uuids_[zone])))
+        SetText(document_, "home-status", "NO SE PUDO INICIAR EL PRESET");
     RefreshHome();
+}
+
+void RadioApp::StartPresetFeedback(int zone)
+{
+    if (zone < 0 || zone > 2)
+        return;
+    lb_pulses_left_ = zone + 1;
+    lb_feedback_active_ = true;
+    lb_next_transition_ = radio_input_milliseconds();
+    if (lb_on_)
+    {
+        radio_input_lightbar(0, 0, 0);
+        lb_on_ = false;
+    }
+    std::fprintf(stderr, "[ProsperoRadio][preset] feedback start P%d pulses=%d\n",
+                 zone + 1, lb_pulses_left_);
+}
+
+void RadioApp::ApplyPresetIndicators()
+{
+    for (int zone = 0; zone < 3; ++zone)
+    {
+        char id[16];
+        std::snprintf(id, sizeof(id), "chip-p%d", zone);
+        const bool saved = preset_saved_[zone];
+        SetClass(document_, id, "chip-off", !saved);
+        SetClass(document_, id, "chip-saved", saved);
+        SetClass(document_, id, "chip-active", saved && preset_active_ == zone);
+        SetClass(document_, id, "chip-confirmed", saved && preset_confirm_zone_ == zone);
+    }
 }
 
 void RadioApp::LightbarTick()
 {
-    ++lb_frame_;
+    const unsigned long long now = radio_input_milliseconds();
     const bool holding = touch_hold_active_ && !touch_fired_;
-    bool on;
+    bool on = false;
     if (holding)
-        on = (lb_frame_ / 7) % 2 == 0;
-    else if (lb_pulses_left_ > 0)
+        on = (now / 180U) % 2U == 0U;
+    else if (lb_feedback_active_)
     {
-        on = (lb_frame_ / 11) % 2 == 0;
-        if (!on && lb_on_)
-            --lb_pulses_left_;
+        if (now >= lb_next_transition_)
+        {
+            if (lb_on_)
+            {
+                on = false;
+                --lb_pulses_left_;
+                if (lb_pulses_left_ <= 0)
+                {
+                    lb_pulses_left_ = 0;
+                    lb_feedback_active_ = false;
+                }
+            }
+            else
+                on = true;
+            lb_next_transition_ = now + 180U;
+        }
+        else
+            on = lb_on_;
     }
     else
         on = preset_active_ >= 0;
     if (on != lb_on_)
     {
         lb_on_ = on;
-        radio_input_lightbar(on ? 244 : 0, on ? 190 : 0, on ? 118 : 0);
+        radio_input_lightbar(on ? 255 : 0, on ? 128 : 0, 0);
     }
 }
 
@@ -1340,4 +2150,68 @@ void RadioApp::RefreshAuxPanel()
     SetText(document_, "aux-note",
             stations >= 0 ? "Entra desde el movil, envia tu M3U y pulsa BARRIDO"
                           : "Sube tu lista M3U desde el movil o el PC");
+}
+
+void RadioApp::RefreshHeadphoneState()
+{
+    const int state = radio_input_jack_state();
+    if (state == headphone_state_)
+        return;
+    headphone_state_ = state;
+    SetText(document_, "headphone-status",
+            state < 0 ? "JACK N/A" : state ? "HEADPHONES ON" : "JACK OPEN");
+    SetClass(document_, "headphone-status", "connected", state == 1);
+}
+
+unsigned RadioApp::ScanAuxPlaylist()
+{
+    aux_stations_.clear();
+    std::FILE *file = std::fopen("/download0/radio-aux.m3u", "rb");
+    if (!file)
+        return 0;
+
+    char line[4096];
+    char extinf[2048]{};
+    while (std::fgets(line, sizeof(line), file) != nullptr &&
+           aux_stations_.size() < kAuxMaxStations)
+    {
+        const std::size_t length = std::strlen(line);
+        if (length == sizeof(line) - 1 && line[length - 1] != '\n' && !std::feof(file))
+        {
+            int ch = 0;
+            while ((ch = std::fgetc(file)) != '\n' && ch != EOF)
+            {
+            }
+            extinf[0] = '\0';
+            continue;
+        }
+        TrimLine(line);
+        if (!*line)
+            continue;
+        if (strncasecmp(line, "#EXTINF:", 8) == 0)
+        {
+            CopyString(extinf, sizeof(extinf), line);
+            continue;
+        }
+        if (line[0] == '#')
+            continue;
+        if (!IsHttpUrl(line))
+        {
+            extinf[0] = '\0';
+            continue;
+        }
+        radio_station_t station{};
+        if (std::strlen(line) >= sizeof(station.url))
+        {
+            extinf[0] = '\0';
+            continue;
+        }
+        MakeAuxStation(line, extinf, &station);
+        aux_stations_.push_back(station);
+        extinf[0] = '\0';
+    }
+    std::fclose(file);
+    std::fprintf(stderr, "[ProsperoRadio][AUX] M3U scan parsed=%u cap=%u\n",
+                 static_cast<unsigned>(aux_stations_.size()), kAuxMaxStations);
+    return static_cast<unsigned>(aux_stations_.size());
 }

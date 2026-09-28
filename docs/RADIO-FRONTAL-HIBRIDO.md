@@ -1,5 +1,9 @@
 # Propuesta: frontal plano con profundidad fotográfica
 
+Este documento fija la dirección visual aprobada. No es una especificación del
+menú ni del mapeo actual del mando; para el estado funcional, consultar el código
+de `overlay/` y el backlog.
+
 ## Dirección visual
 
 La propuesta conserva el ambiente cálido de la escena original y coloca el frontal plano a escala de fachada completa. El cuerpo posterior puede asomar por arriba y por los lados: rejilla, carcasa y madera dan profundidad y mantienen la sensación de aparato físico. El frontal debe cubrir los mandos y la pantalla antiguos de borde a borde; no debe quedar reducido a una placa pequeña dentro del aparato.
@@ -18,7 +22,9 @@ La vista del frontal es ortográfica. Los dos diales conservan círculos reales,
 - `tools/build_radio_front_hybrid.py`: reconstruye las imágenes de revisión y los dos candidatos separados, sin sobrescribir el fondo activo.
 - `tools/build_radio_controls.py`: produce los atlas TGA, ambos manifiestos y las hojas de revisión.
 
-El KTX2 y el manifiesto híbridos quedan como candidatos separados. El RML activo sigue apuntando a `radio_front_4k.ktx2` hasta que GLM cambie y revise explícitamente la integración.
+El fondo híbrido es el recurso activo en el RML de la v042. Este documento conserva
+la dirección visual y los archivos fuente; las posiciones integradas se generan
+desde los manifiestos y requieren validación en consola.
 
 ## Instrucciones para integrar el frontend
 
@@ -26,8 +32,11 @@ El KTX2 y el manifiesto híbridos quedan como candidatos separados. El RML activ
 2. Mantener visible una parte del cuerpo posterior alrededor del frontal, como en la propuesta. Evitar bordes dobles o restos de la interfaz fotográfica antigua sobre los mandos nuevos.
 3. Dibujar el nivel de volumen como un estado del dial izquierdo. El atlas incluye pasos de cinco puntos; el frontend debe seleccionar el paso correspondiente sin generar una imagen por cada valor.
 4. Tratar el control derecho como selector digital: izquierda/anterior y derecha/siguiente cambian de emisora. Sus estados muestran foco, pulsación y dirección activa; el dial no rota.
-5. Presentar el foco, la selección y la pulsación de Inicio, Radio, Favoritos, Géneros, Búsqueda, Ajustes y Reproducir/Pausa con los frames del atlas. La cruceta izquierda/derecha cambia de lista cuando la vista lo permita.
+5. Dibujar los estados de los controles según el manifiesto y el RML generado. Este arte conceptual no define por sí solo las acciones ni los nombres de las teclas; el mapeo activo vive en el código del frontend.
 6. Dibujar en pantalla únicamente información disponible: nombre de emisora, ubicación, idiomas, tipo de audio, formato/bitrate, título e intérprete cuando el stream los proporcione y carátula solo cuando exista. No dejar los datos de ejemplo de esta propuesta grabados como contenido runtime.
 7. Mantener separadas la imagen base, los overlays de estado, la pantalla dinámica y las regiones de interacción. Escalar los hitboxes con las mismas transformaciones que los elementos visibles.
 
-La geometría, los atlas y los estados se documentan en `overlay/assets/ui/controls/manifest-hybrid.json` y `docs/RADIO-CONTROLS-ATLAS.md`. El proceso de empaquetado, carga RmlUi y muestreo Vulkan está detallado en `docs/GLM-TEXTURAS-VULKAN.md`.
+La geometría y los atlas se describen en
+`overlay/assets/ui/controls/manifest-hybrid.json` y
+[`RADIO-CONTROLS-ATLAS.md`](RADIO-CONTROLS-ATLAS.md). La compilación está en
+[`../VULKAN-INTEGRATION.md`](../VULKAN-INTEGRATION.md).

@@ -190,6 +190,10 @@ static uint64_t right_step_at;
     left_stick_repeat_at = 0;
     right_stick_key = -1;
     right_stick_repeat_at = 0;
+    pad_click_down = false;
+    touch_finger = false;
+    touch_valid = false;
+    touch_sample_at = 0;
     return true;
 }""",
         """    queue_read = queue_write = 0;
@@ -200,6 +204,10 @@ static uint64_t right_step_at;
     right_stick_angle = right_stick_accum = 0.0f;
     right_rotary_active = false;
     right_step_at = 0;
+    pad_click_down = false;
+    touch_finger = false;
+    touch_valid = false;
+    touch_sample_at = 0;
     (void)update_analog_action;
     (void)repeat_analog_action;
     return true;
@@ -215,6 +223,10 @@ static uint64_t right_step_at;
     left_stick_repeat_at = 0;
     right_stick_key = -1;
     right_stick_repeat_at = 0;
+    pad_click_down = false;
+    touch_finger = false;
+    touch_valid = false;
+    touch_sample_at = 0;
 }""",
         """        owns_user_service = false;
     }
@@ -222,6 +234,10 @@ static uint64_t right_step_at;
     button_state = 0;
     left_rotary_active = false;
     right_rotary_active = false;
+    pad_click_down = false;
+    touch_finger = false;
+    touch_valid = false;
+    touch_sample_at = 0;
 }""",
     )
     replace_once(

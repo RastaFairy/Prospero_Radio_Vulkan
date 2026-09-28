@@ -1038,6 +1038,11 @@ body {
 }
 #home-status.warning { color: #e2a658; }
 #home-status.error { color: #d56b65; }
+.jack-status {
+    position: absolute; left: 414px; top: 8px; width: 180px; height: 18px;
+    color: #806b54; font-size: 12px; line-height: 16px; text-align: center;
+}
+.jack-status.connected { color: #f4be76; }
 #home-hint {
     position: absolute; left: 8px; top: 202px; width: 620px; height: 22px;
     color: #bc7e39; font-size: 14px; line-height: 20px;
@@ -1048,14 +1053,14 @@ body {
     color: #f4be76; font-size: 18px; line-height: 32px; text-align: center;
 }
 #eq {
-    position: absolute; left: 620px; top: 194px; width: 120px; height: 30px;
+    position: absolute; left: 640px; top: 148px; width: 100px; height: 72px;
 }
 .eq-bar {
     position: absolute; bottom: 0px; width: 10px;
     background-color: #e2a658;
 }
-#eq-0 { left: 0px; } #eq-1 { left: 24px; } #eq-2 { left: 48px; }
-#eq-3 { left: 72px; } #eq-4 { left: 96px; }
+#eq-0 { left: 0px; } #eq-1 { left: 20px; } #eq-2 { left: 40px; }
+#eq-3 { left: 60px; } #eq-4 { left: 80px; }
 
 #screen-list, #screen-genres {
     position: absolute; left: 0px; top: 0px; width: 888px; height: 228px;
@@ -1067,6 +1072,22 @@ body {
 #list-status, #genres-status {
     position: absolute; left: 560px; top: 4px; width: 320px; height: 22px;
     color: #bc7e39; font-size: 15px; line-height: 20px; text-align: right;
+    white-space: nowrap; overflow: hidden;
+}
+#list-title { visibility: hidden; }
+#list-tabs { position: absolute; left: 8px; top: 3px; width: 510px; height: 24px; }
+.list-tab {
+    position: absolute; top: 0px; height: 22px; padding: 1px 9px;
+    border: 1px #68492d; border-radius: 4px; color: #a97943;
+    font-size: 13px; line-height: 18px; text-align: center;
+    white-space: nowrap;
+}
+#list-tab-radio { left: 0px; width: 112px; }
+#list-tab-favorites { left: 118px; width: 178px; }
+#list-tab-aux { left: 302px; width: 112px; }
+.list-tab.active {
+    border: 1px #f4be76; background-color: #50351d; color: #ffe2ad;
+    font-weight: bold;
 }
 .list-row {
     position: absolute; left: 8px; width: 872px; height: 25px;
@@ -1086,7 +1107,7 @@ body {
 }
 .list-row.cursor .list-cursor { visibility: visible; }
 .list-name {
-    position: absolute; left: 26px; top: 2px; width: 440px; height: 21px;
+    position: absolute; left: 26px; top: 2px; width: 430px; height: 21px;
     color: #f4be76; font-size: 17px; line-height: 21px;
     overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
 }
@@ -1164,6 +1185,23 @@ body {
 }
 #chip-p0 { left: 744px; } #chip-p1 { left: 788px; } #chip-p2 { left: 832px; }
 .chip-off { color: #4a3826; border-color: #4a3826; }
+.chip-saved { color: #ffd08a; border: 2px #d28b3e; background-color: #3b2515; font-weight: bold; }
+.chip-active { color: #fff2d7; border: 2px #ffc56d; background-color: #70461f; font-weight: bold; }
+.chip-confirmed { color: #24160c; border: 2px #fff0d1; background-color: #f4be76; font-weight: bold; }
+/* ID selectors above are more specific than the generic state classes. Keep
+   the saved/active/confirmation states visibly stronger on the LCD. */
+#chip-p0.chip-off, #chip-p1.chip-off, #chip-p2.chip-off {
+    color: #765d43; border-color: #765d43; background-color: #1d130d;
+}
+#chip-p0.chip-saved, #chip-p1.chip-saved, #chip-p2.chip-saved {
+    color: #ffd08a; border: 2px #d28b3e; background-color: #3b2515; font-weight: bold;
+}
+#chip-p0.chip-active, #chip-p1.chip-active, #chip-p2.chip-active {
+    color: #fff2d7; border: 2px #ffc56d; background-color: #70461f; font-weight: bold;
+}
+#chip-p0.chip-confirmed, #chip-p1.chip-confirmed, #chip-p2.chip-confirmed {
+    color: #24160c; border: 2px #fff0d1; background-color: #f4be76; font-weight: bold;
+}
 .chip { display: block; }
 .filter-1, .filter-3 { display: block; }
 .search-match { color: #f4be76; }

@@ -1,16 +1,241 @@
 # Registro de cambios — ProsperoRadio Vulkan Edition
 
-> **Versión declarada por la fuente actual: 01.000.027** · rama de desarrollo, no release validada.
+> **Build 01.000.042** · paquete generado y gate aprobado; prueba parcial en PS5 documentada.
+> No es una release certificada: las capturas muestran la versión, pero no se cotejó el hash instalado.
 >
 > No confundir: *2.2.1* es la versión del paquete de interfaz original sobre el que se
 > construye este fork; *01.000.0XX* es la `contentVersion` que ve la consola en
 > `sce_sys/param.json` (la fija `overlay/apply-vulkan.py` en cada build).
 >
-> La última prueba de build guardada en `out/build028.log` terminó con error en el
-> gate del paquete. Consulta [`docs/PENDIENTES.md`](docs/PENDIENTES.md) antes de
-> tratar el estado actual como publicable.
+> El flujo de compilación y sus límites se describen en
+> [`VULKAN-INTEGRATION.md`](VULKAN-INTEGRATION.md). Los fallos pendientes de v042
+> están en [`docs/PENDIENTES.md`](docs/PENDIENTES.md).
 
 ---
+
+## 01.000.042 — 2026-09-28 · correcciones tras observación de la v039
+
+- Baseline inicial: las capturas anteriores del usuario muestran `01.000.039`.
+  La lista presentaba texto superpuesto, Ajustes aparecía sobre fondo blanco y AUX/M3U
+  era difícil de descubrir. No atribuir esos síntomas iniciales a otra versión.
+- La navegación RADIO/FAVORITOS/AUX ahora permite seleccionar AUX incluso si
+  no hay emisoras cargadas; la pestaña visible y la fuente seleccionada siguen
+  el mismo ciclo en ambos sentidos.
+- La app persiste presets de listas externas como snapshots `radio_station_t`
+  además de los presets de catálogo. Los chips P1/P2/P3 tienen reglas CSS con
+  especificidad explícita para distinguir vacío, guardado, activo y confirmación.
+- El helper `SetText` escapa `&`, `<` y `>` antes de pasarlos a `SetInnerRML`,
+  para que nombres y metadatos de M3U no se interpreten como marcado.
+- Los nombres de emisora M3U usan una identidad estable basada en URL y no en
+  su posición dentro del fichero. Se mantiene el panel AUX del payload con una
+  presentación de conectores traseros RCA/jack y carga de fichero `.m3u`.
+- Se corrigió el contrato de retorno de `SavePresets()` para reflejar fallos
+  de escritura/renombrado y sincronización con el payload.
+- El atlas actual no declara frames P1/P2/P3: el estado visual se resuelve con
+  CSS sobre el LCD, no se afirma una textura de preset que el manifiesto no
+  contiene. La detección física del jack queda pendiente; la búsqueda dinámica
+  es solo tentativa y necesita confirmación en consola.
+- Se mantuvo EQ dentro del rectángulo de cristal y no se añadieron controles de
+  ajustes/temas a la navegación principal. El color RGB del DualSense no se modificó.
+- Artefacto: `out/prospero-radio-01.000.042/PPSA99001.ffpfsc`, 52,887,552
+  bytes, SHA-256 `7C515C6EC3214429264E678B0E30391C370DA4F3E41048B863176A351051D3D7`.
+  `eboot.bin` SHA-256 `A8ECA863E6870A7F5422530F39F4E5EF00BFB1E6DE32DF325004B58B548ED757`.
+  `param.json`, RML y banner indican `01.000.042`; gate: 14 aprobados,
+  0 warnings, 0 fallos. Las fotos del usuario del 28-09-2026 muestran la app en PS5
+  con sello `01.000.042`, emisora y listas visibles. Persisten pestañas superpuestas/
+  vacías, `JACK N/A`, contraste bajo en el encabezado web AUX y duplicación de M3U
+  reportada al reenviar una lista. La prueba es parcial y el hash instalado no se cotejó.
+
+## 01.000.041 — 2026-09-28 · importación M3U y lista AUX en RADIO
+
+- La página del servidor AUX adopta los materiales visuales de la radio (madera,
+  metal cepillado y cristal ámbar) y permite escoger un fichero `.m3u` desde el
+  navegador móvil o de escritorio. Se conserva el pegado de texto como alternativa.
+- La subida transmite el contenido original con `Content-Length`; el payload lo
+  guarda en `/data/radio/radio-aux.m3u` usando temporal, `fsync` y renombrado.
+- La app lee la lista importada y crea emisoras externas con título y metadatos
+  `#EXTINF`, filtrando a URLs HTTP(S). Se mantiene separada del catálogo Radio
+  Browser. La disponibilidad de cada URL se confirma al intentar reproducirla.
+- Al abrir RADIO, la app recupera la lista AUX persistida; izquierda/derecha
+  alternan entre Radio Browser, Favoritos y AUX. BARRIDO sigue permitiendo
+  copiarla y abrirla directamente.
+- No se cambió el color RGB del mando ni el atlas de texturas.
+- Hubo un intento de compilación 039 que encontró un NUL en un literal
+  generado. Aun así, las capturas del usuario identifican por pantalla una
+  ejecución v039. No se halló en `out/` el paquete/hash exacto instalado, así
+  que no se vincula ese intento fallido con la ejecución fotografiada.
+- La 041 queda como candidata histórica; no hay artefacto 041 disponible en
+  el `out/` actual ni una prueba de consola atribuible a esa versión. El
+  artefacto actual es la 042, descrita arriba.
+
+## 01.000.038 — 2026-09-28 · identidad estable de presets y refresco de EQ
+
+- Los presets guardan el UUID de la emisora junto al índice de compatibilidad.
+  La recuperación busca por UUID en el catálogo y ya no interpreta una posición
+  de Favoritos como la misma posición de la lista general.
+- Los ficheros antiguos con tres índices se leen y migran cuando la emisora
+  puede resolverse en la vista general cargada. Un índice antiguo que proviniera
+  de otra vista no conserva información suficiente para reconstruir con certeza
+  su UUID.
+- El lanzamiento de un preset pendiente tras detener la emisora anterior usa
+  también el UUID. HOME conserva los metadatos seleccionados para no volver a
+  mostrar `Tuning...` por un cambio de página o vista.
+- El EQ sincroniza el nombre de preset desde el servicio y actualiza las cinco
+  etiquetas al iniciar y cada vez que se abre la pantalla; ya no requiere mover
+  el joystick para actualizar la vista. La edición personalizada inicia el ciclo
+  siguiente en el preset Flat.
+- El usuario confirmó que el color RGB del DualSense ahora es correcto. No se
+  cambió la lógica de color en esta revisión.
+- Artefacto: `out/prospero-radio-01.000.038/PPSA99001.ffpfsc` (52,887,552
+  bytes; SHA-256
+  `EA2023C7D294F6CEC063509AF783A22656D165BB43FCB5752290B8C7EF0D9C19`).
+  Build FFPFSC terminada con salida 0; gate 14/14, 0 warnings, 0 fallos;
+  empaquetador sin errores ni warnings. Sin prueba en PS5 para esta versión.
+
+## 01.000.037 — 2026-09-28 · AUX bajo demanda y correcciones de estado
+
+- AUX deja de arrancar por defecto. Al abrir su vista, la app solicita al payload
+  `START_AUX`, consulta el estado y el payload enlaza TCP 7000. Al salir de AUX,
+  apagar la radio o cerrar la app, la app solicita `STOP_AUX` para liberar el
+  listener. Es la API del payload la que posee el servidor.
+- El servidor recibe `POST /list` con `Content-Length` hasta 32 MiB y conserva la
+  lista anterior si la carga queda incompleta. Escribe primero un temporal,
+  sincroniza y renombra `/data/radio/radio-aux.m3u`. AUX no tiene autenticación;
+  debe usarse solo en una LAN de confianza.
+- BARRIDO solicita el fichero AUX por RPC (ID 6) y lo copia a
+  `/download0/radio-aux.m3u`. La app cuenta líneas `http://`/`https://`; no
+  importa todavía esas entradas al catálogo reproducible ni verifica que sus
+  streams estén disponibles. La pantalla informa copia/conteo, no reproducción.
+- Cambia el canal entre app y payload: elfldr recibe la solicitud del ELF con
+  `pipe=0`; después la app se conecta al RPC del payload en `127.0.0.1:7001`.
+  El payload acepta `STATUS`, `START_AUX`, `STOP_AUX` y `ATTACH` además de las
+  operaciones de persistencia. El modo de carga, loopback y cierre siguen
+  pendientes de comprobación en PS5.
+- HOME prioriza los metadatos de la emisora realmente en reproducción y refresca
+  al cambiar el índice activo; evita mostrar el estado de sintonía del cursor de
+  lista cuando su índice no está en la página cargada.
+- La señal de presets usa pulsos temporizados de 180 ms, color solicitado
+  (255,128,0), un ciclo por zona P1/P2/P3 y estado fijo mientras siga activo el
+  preset. `scePadSetLightBar` usa la estructura de cuatro bytes y registra los
+  errores. El tono ámbar real debe confirmarse en hardware.
+- No se añade detección de auriculares: no hay una API de conexión de audio
+  verificada en este proyecto. El indicador no debe presentarse como detección
+  física hasta implementar esa fuente de estado.
+- Artefacto: `out/payload-bridge-01.000.037-api/PPSA99001.ffpfsc` (52,887,552
+  bytes; SHA-256
+  `E917678D0A682DF99C0EA86920158DA2945BF7549C6466815847B263DFA63C27`). Build
+  con salida 0; gate del paquete 14/14, 0 warnings y 0 fallos; el empaquetador
+  registró 0 errores y 0 warnings. Estos resultados verifican artefactos, no la
+  ejecución de ELF, la red ni la presentación en consola.
+
+## 01.000.036 — 2026-09-28 · puente persistente integrado y controles corregidos
+
+- Promueve el puente de `/data/radio` desde sonda de diagnóstico a la build normal
+  `ffpfsc`; el payload se nombra `ProsperoRadioDataBridge.elf`, se compila con
+  warnings como errores y se entrega automáticamente a elfldr al iniciar.
+- Sustituye el listener auxiliar TCP 7001 por el canal heredado `pipe=1` de
+  elfldr: la app y el payload comparten el socket aceptado en stdin/stdout. Se
+  elimina una dependencia innecesaria de `SceNet` del ELF de persistencia.
+- Al salir, guarda el estado, manda `STOP`, hace half-close y espera EOF. Si el
+  ACK no llega, el cierre de entrada también hace que el bucle del payload lea
+  EOF y retorne. La liberación real de su proceso todavía necesita log/klog de PS5.
+- Reintenta la conexión a elfldr durante un segundo si el listener local aún no
+  está listo; si el bridge no arranca, la radio conserva el fallback de `/download0`.
+- Arranca AUX después del servicio de radio, para que el importador de listas
+  escuche en el puerto 7000 sin tener que entrar primero en esa vista.
+- Lee los contactos DualSense desde `ScePadData.touchData.touch[0]` (conteo
+  `0x34`, coordenadas `0x3c/0x3e`, ID `0x40`), actualiza la antigüedad solo con
+  un contacto válido y pasa un `s_SceLightBar` de 3 bytes. La zona se fija al
+  click; contacto sin click no actúa; el click largo conserva 3 segundos.
+- Corrige el número de pulsos de la barra: cada preset emite 1, 2 o 3 ciclos,
+  no el doble. AUX y BARRIDO conservan acciones distintas y en el orden actual.
+- Mantiene la persistencia de catálogo/favoritos/EQ/presets y la corrección de
+  índices globales para páginas. Los fixes anteriores de EQ, reproducción y
+  paginado fueron observados por el usuario en consola; aún hay que repetir la
+  prueba con el paquete 036.
+- Motivo: v034 probó acceso de payload a `/data/radio`, pero la app rechazó el
+  loopback 7001. Reutilizar el socket que elfldr documenta para `pipe=1` elimina
+  ese punto de fallo y deja 7000 exclusivamente a AUX.
+- Se quitó una constante HTTP sin uso que quedó tras sustituir el servidor AUX;
+  se corrigió en el código generado, sin ocultar warnings ni retirar funciones.
+- Artefacto compilado: `out/payload-bridge-01.000.036-final/PPSA99001.ffpfsc`
+  (52,887,552 bytes; SHA-256
+  `150697e6f6d57ef315efbddf625a30c85b2b1063d87666d8fc93ee81387a0227`). El
+  contenedor reporta 0 errores/0 warnings y el gate marca 14 passed, 0 warnings,
+  0 failures. La prueba de hardware sigue pendiente.
+
+## 01.000.035 — estado fuente previo, sin FFPFSC confirmada
+
+- Incorporó el primer cableado de persistencia por socket local y los cambios de
+  UI/controladores en el árbol compartido. No se ha localizado un paquete 035
+  verificable en `out/`; no atribuirle resultados de hardware.
+
+## 01.000.034 — 2026-09-28 · zonas táctiles DualSense
+
+- El click del panel se procesa por transición real de press/release y no se
+  confunde con otros botones del mando.
+- Cada evento conserva las coordenadas de contacto del mismo informe; P1/P2/P3
+  se eligen por tercios horizontales (0–639, 640–1279, 1280–1919).
+- Toque sin click se ignora. Click corto recupera; mantener click y contacto
+  durante 3 segundos guarda. Levantar antes cancela.
+- Se descartan coordenadas obsoletas y se registra cada gesto en el log.
+- Requiere prueba en PS5: offsets táctiles y respuesta física aún no verificados.
+
+## 01.000.033 — 2026-09-28 · puente de persistencia en loopback
+
+- Sustituye la sonda HTTP de una petición por `ProsperoRadioDataBridge.elf`,
+  con protocolo binario acotado en `127.0.0.1:7001`; reserva el puerto 7000 para AUX.
+- Restaura antes de iniciar el servicio el catálogo, favoritos, EQ y presets
+  desde `/data/radio`, y siembra los ficheros ausentes desde la caché de `/download0`.
+- Persiste cambios pequeños inmediatamente y sube snapshots SQLite consistentes
+  después de la sincronización completa; los `PUT` se publican por rename atómico.
+- Corrige la resolución de índices globales en páginas y favoritos, mantiene el
+  orden/filtro activos y hace que el UUID seleccionado controle la acción.
+- Build diagnóstico pendiente de validar en PS5, incluidos AUX, reinicios y cierre.
+
+## 01.000.032 — 2026-09-28 · informe del payload en `/data/radio`
+
+- El payload crea y trunca su propio `prospero-payload-probe.log` dentro de
+  `/data/radio`; cada etapa se guarda allí y en klog.
+- Tras la respuesta HTTP, la app abre ese fichero y comprueba los marcadores
+  de inicio y de lectura/escritura del directorio compartido.
+- El informe de la app sigue en `/download0`; el build de consola debe mostrar
+  `shared payload log read PASS` para demostrar lectura entre procesos.
+
+## 01.000.031 — 2026-09-28 · conexión local compatible con PS5
+
+- Conserva el inicio diferido de la sonda y reduce la comprobación de salud a
+  ocho intentos separados por 50 ms.
+- Restaura la conexión TCP normal a elfldr: la consola rechazó el `connect`
+  no bloqueante de la 030 segura con `errno=13`.
+- La telemetría 01.000.030 confirma ejecución del ELF, acceso de escritura a
+  `/data/radio` y respuesta del listener local en el puerto 7000.
+- La sonda no puede escribir directamente en el `download0` de la app; su
+  resultado resumido queda registrado por la app y el detalle, en klog.
+
+## 01.000.028 — 2026-09-27 · sondeo optativo de payload local
+
+- Añade `probe-ffpfsc`, una variante diagnóstica separada de las builds normales.
+- Al iniciar, la app intenta transferir un ELF mínimo al elfldr local en el puerto
+  9021; registra cada etapa en `/download0/prospero-payload-probe.log`.
+- El payload informa por klog y comprueba `/data/radio`, escritura temporal en
+  `/download0` y una respuesta local de una sola petición en el puerto 7000.
+- No termina la app, no deja un servicio persistente y no demuestra todavía el
+  acceso desde LAN ni la ejecución en hardware.
+
+## 01.000.030 — 2026-09-27 · corrección de ruta de la sonda
+
+- Usa el contenido montado de ShadowMountPlus en `/system_ex/app/PPSA99001`.
+- El klog 01.000.029 mostró que elfldr no encontraba la URI anterior bajo
+  `/user/app`; el acceso desde el proceso de elfldr aún requiere validación.
+- El bloqueo observado corresponde al watchdog de `SceShellUI`; el klog no
+  registra un crash del proceso `PPSA99001`.
+
+## 01.000.029 — 2026-09-27 · primera URI local de elfldr
+
+- La app conectó al puerto 9021 y envió una URI `file:` con nombre de ELF.
+- elfldr rechazó la ruta bajo `/user/app`; no hay evidencia de ejecución del
+  payload en esta versión.
 
 ## Por qué existe este fork
 
@@ -31,10 +256,10 @@ existe por tres motivos:
    runtime en `/download0/prospero-radio.log`, rastro de las últimas 32 asignaciones,
    backtraces simbolizados y el tooling en `out/` para analizar coredumps.
 
-El detalle técnico de cada build está en la **[MEMORIA.md](MEMORIA.md)**; este fichero
-es el resumen para humanos.
+La evidencia de cada versión y sus límites se conservan en esta cronología y en
+[`docs/PENDIENTES.md`](docs/PENDIENTES.md).
 
-## 01.000.027 — 2026-09-27 · rama actual en desarrollo
+## 01.000.027 — 2026-09-27 · registro histórico
 
 - La fuente declara esta versión en `overlay/apply-vulkan.py` y
   `sce_sys/param.json`.
@@ -42,8 +267,8 @@ es el resumen para humanos.
   fiable y navegación por el catálogo completo.
 - Continúan pendientes el mapeo del panel táctil, el servidor AUX, el indicador de
   auriculares y la reconstrucción de Ajustes/temas.
-- La versión mostrada por esas pruebas no se cotejó con este árbol; los resultados son
-  observaciones manuales, no una certificación de esta versión fuente.
+- La versión mostrada por esas pruebas no se cotejó con aquel árbol; los resultados son
+  observaciones manuales, no una certificación de esa versión fuente.
 - El build 028 registrado no superó el gate del paquete. No se creó una release a
   partir de ese resultado.
 
@@ -123,7 +348,7 @@ imita.
   asignaciones y `abort()` con el tamaño pedido en el log.
 - **La prueba en consola dio el culpable**: `calloc(1, 1,22 MB)` del mapa de glifos de
   la fuente multilingüe devolvía NULL a los ~0,6 s. Demostró que el heap de libc no
-  crece (ver `MEMORIA.md`).
+  crece; las notas históricas restantes están recogidas en esta cronología.
 
 ## 01.000.015 — 2026-09-25 · ⚠️ no ejecutable
 
@@ -157,15 +382,15 @@ imita.
 | Ruta | Contenido |
 | --- | --- |
 | `overlay/` | Todo lo que este fork añade: renderer Vulkan, runtime de memoria, UI, scripts de parcheo |
-| `MEMORIA.md` | Etapas del proyecto, decisiones, lecciones técnicas y pendientes |
-| `out/` | Tooling conservado (simbolizado de coredumps, test del pool, watchers de klog/FTP) |
-| `src/`, `tooling/`, `vendor/`, `docs/` | El árbol base de upstream, conservado del fork original |
+| `src/`, `include/`, `tooling/`, `vendor/` | Código base y dependencias del fork |
+| `docs/` | Compilación, arquitectura, validación y pendientes actuales |
+| `out/` | Paquetes, logs y volcados locales; ignorados por Git |
 
 ## Distribución
 
-Los paquetes (`PPSA99001.ffpkg` / `PPSA99001.ffpfsc`) y sus SHA-256 se documentan en
-`MEMORIA.md` (§ 4); no se versionan en git por tamaño — adjúntalos a un *Release* de
-GitHub con la etiqueta de la versión.
+Los paquetes (`PPSA99001.ffpkg` / `PPSA99001.ffpfsc`) no se versionan en Git por
+tamaño. La versión v042 y los SHA-256 del artefacto local están registrados al inicio
+de este changelog; una publicación binaria requiere un Release explícito.
 
 ## 01.000.026 (2026-09-26)
 - Nueva interfaz física: rótulos POWER/BANDA/MEM/AUX/BARRIDO/EQ/PLAY y estados de foco/selección con contraste real (atlas y frontal regenerados).

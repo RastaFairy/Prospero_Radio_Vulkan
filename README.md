@@ -6,12 +6,12 @@
 
 Radio por internet para PS5 con una interfaz inspirada en un receptor clásico.
 
-![versión fuente](https://img.shields.io/badge/fuente-01.000.027-orange)
+![versión overlay](https://img.shields.io/badge/overlay-01.000.042-orange)
 ![plataforma](https://img.shields.io/badge/plataforma-PS5-00adef)
-![estado](https://img.shields.io/badge/estado-en%20desarrollo-orange)
+![estado](https://img.shields.io/badge/estado-validacion%20parcial-orange)
 ![licencia](https://img.shields.io/badge/licencia-GPL--3.0-orange)
 
-[Cambios](CHANGELOG.md) · [Pendientes](docs/PENDIENTES.md) · [Memoria histórica](MEMORIA.md) · [Problemas](https://github.com/RastaFairy/Prospero_Radio_Vulkan/issues)
+[Cambios](CHANGELOG.md) · [Pendientes](docs/PENDIENTES.md) · [Integración Vulkan](VULKAN-INTEGRATION.md) · [Problemas](https://github.com/RastaFairy/Prospero_Radio_Vulkan/issues)
 
 </div>
 
@@ -19,17 +19,17 @@ Radio por internet para PS5 con una interfaz inspirada en un receptor clásico.
 
 ## Estado actual
 
-La fuente del árbol indica **01.000.027** en `overlay/apply-vulkan.py` y
-`sce_sys/param.json`. No hay una release 027/028 validada para distribución: el
-intento 028 registrado en `out/build028.log` terminó con un error del gate del
-paquete. Consulta [Pendientes](docs/PENDIENTES.md) antes de instalar o publicar
-otra build.
+La versión fuente y el paquete local más reciente son **01.000.042**. El paquete
+FFPFSC se generó correctamente y superó el gate de recursos. Las capturas recibidas
+el 28-09-2026 muestran la v042 ejecutándose en una PS5: aparece una emisora y se
+puede abrir la lista AUX M3U. Es una validación parcial; no se cotejó el hash del
+paquete instalado y no certifica todas las funciones.
 
-En la prueba manual más reciente comunicada por el autor se confirmaron tres
-correcciones en consola: edición y persistencia del EQ, reproducción de audio más
-fiable y navegación por el catálogo completo. La correspondencia exacta entre esa
-instalación y el estado fuente de este repositorio aún debe comprobarse. Los fallos
-restantes están separados de esas observaciones en el backlog.
+En esa prueba siguen observándose etiquetas de fuente superpuestas o vacías, el
+estado `JACK N/A` al conectar el mando, y el usuario reporta que una lista M3U
+reenviada puede duplicar emisoras ya importadas. En la página web AUX, el subtítulo
+superior pierde contraste hacia la derecha. Estos puntos están registrados en
+[`docs/PENDIENTES.md`](docs/PENDIENTES.md); no se han corregido en esta publicación.
 
 ## Qué aporta este fork
 
@@ -41,9 +41,12 @@ restantes están separados de esas observaciones en el backlog.
   commit upstream fijado en el build.
 - Herramientas para producir la fachada y los atlas en
   [`docs/RADIO-CONTROLS-ATLAS.md`](docs/RADIO-CONTROLS-ATLAS.md).
+- Puente de persistencia en `/data/radio` y servidor de importación M3U por
+  payload; el protocolo y sus límites están en
+  [`docs/PUENTE-PAYLOAD.md`](docs/PUENTE-PAYLOAD.md).
 
-La salida a distintas resoluciones se calcula a partir del modo activo de VideoOut;
-su comportamiento en 4K, 1440p y modos dinámicos debe seguir validándose en consola.
+La salida se calcula a partir del modo activo de VideoOut. La presentación final en
+4K, 1440p y resoluciones dinámicas requiere validación en consola.
 
 ## Compilar
 
@@ -65,10 +68,13 @@ subir paquetes, dumps de consola, SDK ni dependencias descargadas. Consulta
 
 ## Distribución
 
-Esta rama está en desarrollo y no ofrece una imagen 01.000.027/028 verificada para
-instalar. Las futuras releases deben incluir la versión exacta validada, la carpeta
-de aplicación o FFPFSC y sus SHA-256; el gate y la prueba de consola se describen en
-[`docs/PENDIENTES.md`](docs/PENDIENTES.md).
+Esta rama está en desarrollo y la v042 tiene validación parcial en hardware. El
+paquete local pesa 52,887,552 bytes (SHA-256
+`7C515C6EC3214429264E678B0E30391C370DA4F3E41048B863176A351051D3D7`). El sello de
+pantalla confirma la versión mostrada, pero no identifica por sí solo el hash
+instalado. No se distribuye aquí el paquete: los artefactos y logs de `out/` son
+locales. Consulta [`CHANGELOG.md`](CHANGELOG.md) y
+[`docs/PENDIENTES.md`](docs/PENDIENTES.md) para la evidencia y lo que falta.
 
 ## Estructura principal
 

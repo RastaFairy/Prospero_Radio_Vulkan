@@ -90,7 +90,7 @@ const bool g_runtime_log_ready = []() {
         if (log != nullptr)
             std::setvbuf(log, nullptr, _IONBF, 0);
     }
-    std::fprintf(stderr, "[PS5-RT] runtime log ready (app_cpp_runtime fork 01.000.027)\n");
+    std::fprintf(stderr, "[PS5-RT] runtime log ready (app_cpp_runtime fork 01.000.028)\n");
     return log != nullptr;
 }();
 

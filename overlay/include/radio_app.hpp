@@ -38,7 +38,7 @@ private:
         Eq,       // equalizer surface
     };
 
-    enum class ListKind { Radio, Favorites };
+    enum class ListKind { Radio, Favorites, Auxiliary };
 
     static constexpr unsigned ButtonCount = 7;
     static constexpr unsigned ListRows = 7;
@@ -46,6 +46,7 @@ private:
 
     Rml::ElementDocument* document_ = nullptr;
     bool service_started_ = false;
+    unsigned long long payload_keepalive_tick_ = 0;
     bool have_last_status_ = false;
     radio_service_status_t last_status_{};
 
@@ -57,6 +58,9 @@ private:
     unsigned list_cursor_ = 0;
     unsigned list_total_ = 0;
     unsigned list_indices_[ListRows]{};
+    bool list_aux_entries_[ListRows]{};
+    std::vector<radio_station_t> aux_stations_;
+    std::vector<radio_station_t> aux_favorites_;
 
     unsigned genre_start_ = 0;
     unsigned genre_cursor_ = 0;
@@ -69,14 +73,22 @@ private:
     int poweroff_ticks_ = -1;  /* >=0 while the LCD power-off fade runs */
     bool quit_requested_ = false;      /* set once, main loop breaks cooperatively (no _Exit) */
     int presets_[3] = {-1, -1, -1};   /* touchpad quick presets (station idx) */
+    char preset_uuids_[3][40]{};      /* stable station identity across list pages/views */
+    bool preset_saved_[3]{};
+    bool preset_external_[3]{};
+    radio_station_t preset_external_station_[3]{};
+    radio_station_t tuned_station_{};
+    bool tuned_station_valid_ = false;
+    int headphone_state_ = -2;
     int preset_active_ = -1;          /* zone currently tuned from, -1 = free */
     bool touch_hold_active_ = false;
     bool touch_fired_ = false;
     int touch_zone_ = 0;
     unsigned long long touch_start_ = 0;
-    unsigned long long lb_frame_ = 0;
+    unsigned long long lb_next_transition_ = 0;
     int lb_pulses_left_ = 0;
     bool lb_on_ = false;
+    bool lb_feedback_active_ = false;
     int eq_sel_ = 0;
     int eq_preset_ = 0;
     int theme_index_ = 0;      /* applied cabinet finish */
@@ -97,6 +109,12 @@ private:
     std::vector<radio_facet_t> language_facets_;
 
     char pending_play_uuid_[40]{};
+    unsigned pending_play_index_ = InvalidStation;
+    radio_station_t pending_play_station_{};
+    bool pending_play_external_ = false;
+    bool tuned_is_aux_ = false;
+    int preset_confirm_zone_ = -1;
+    unsigned long long preset_confirm_until_ = 0;
 
     void LoadTheme();
     void SaveTheme() const;
@@ -115,15 +133,24 @@ private:
 
     void StorePreset(int zone);
     void RecallPreset(int zone);
+    void StartPresetFeedback(int zone);
+    void ApplyPresetIndicators();
     void LoadPresets();
-    void SavePresets();
+    bool SavePresets();
+    void LoadAuxFavorites();
+    bool SaveAuxFavorites();
+    bool IsAuxFavorite(const char *uuid) const;
+    bool ToggleAuxFavorite(const radio_station_t &station);
     void LightbarTick();
     void RefreshEq();
     void SaveEq();
     void RefreshAuxPanel();
+    void RefreshHeadphoneState();
     void AdjustVolume(int direction);
     void TuneStation(int direction);
     void PlayIndex(unsigned index);
+    void PlayAuxStation(const radio_station_t &station);
+    unsigned ScanAuxPlaylist();
     void ToggleFavoriteOnTuned();
     void BuildList();
     void RefreshList();

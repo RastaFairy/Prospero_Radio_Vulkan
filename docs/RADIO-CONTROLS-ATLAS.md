@@ -81,10 +81,9 @@ frame. Ese borde evita que el muestreo lineal mezcle píxeles del vecino si el
 filtro cambia. El sampler TGA Vulkan actual es nearest/clamp, así que el gutter
 no cambia el aspecto ni crea márgenes visibles al dibujar el núcleo.
 
-1. Para la propuesta híbrida, cargar `radio_front_hybrid_4k.ktx2` como primera
-   capa de 3840x2160. Presentarla en el lienzo lógico completo de 1920x1080,
-   con una única escala proporcional. Mantener `radio_front_4k.ktx2` como
-   variante plana de recuperación.
+1. El fondo híbrido `radio_front_hybrid_4k.ktx2` es el recurso activo en la v042.
+   Se presenta en el lienzo lógico de 1920x1080 con escala proporcional. El
+   `radio_front_4k.ktx2` es la variante plana.
 2. Dibujar el nombre de emisora, canal/ubicación, idioma, códec, bitrate y
    canción actual dentro de `screen.contentRect`, en naranja ámbar sobre el
    cristal ahumado. Dejar transparente el fondo de esa capa y no cubrir la
@@ -95,10 +94,10 @@ no cambia el aspecto ni crea márgenes visibles al dibujar el núcleo.
 3. Si existe una carátula real proporcionada por la emisora o el stream,
    dibujarla dentro del cristal y reducir el ancho del texto. Si no existe,
    mantener oculto el elemento de carátula y usar todo el ancho para texto.
-4. En RCSS declarar cada TGA con `@spritesheet`, tomando de JSON `x`, `y`,
-   `width` y `height` del frame. No incluir los 8 px de extrusión en ese
-   rectángulo. RmlUi resuelve los sprites por nombre y comparte la textura;
-   no cargar una textura nueva por cada estado.
+4. El build extrae los rectángulos del atlas a imágenes TGA individuales en
+   `assets/ui/controls/frames/`. En esta configuración no se usa `@spritesheet`:
+   cada `<img>` del RML tiene su archivo y su rectángulo de destino en RCSS. El
+   gutter del manifiesto se descuenta al recortar el frame.
 5. Elegir un frame de `volume.tga` en cada cambio de volumen y dibujarlo sobre
    el rectángulo indicado. Es un overlay con fondo transparente: no cubre el
    metal ni sustituye el dial fijo. Solo añade el arco, las marcas ámbar, la
@@ -109,11 +108,11 @@ no cambia el aspecto ni crea márgenes visibles al dibujar el núcleo.
 7. Seleccionar en `buttons.tga` una de las cinco filas y dibujarla sobre el
    rectángulo de cada tecla. La fila `selected_focus` combina ambos estados.
 
-`overlay/apply-vulkan.py` copia ambos KTX2 candidatos y los `.tga`/JSON de
-controles al árbol upstream que se empaqueta. La integración de estados todavía
-corresponde al cambio de UI: el atlas no modifica por sí solo la navegación ni
-el volumen. El proceso completo para Vulkan está en
-`docs/GLM-TEXTURAS-VULKAN.md`.
+`overlay/console_ux_patch.py` extrae los frames y genera RML/RCSS durante el
+build; `overlay/apply-vulkan.py` incorpora los recursos al árbol que se empaqueta.
+El paquete v042 contiene 62 frames individualizados. P1/P2/P3 usan chips CSS; el
+manifiesto no contiene texturas de preset. La compilación está descrita en
+`../VULKAN-INTEGRATION.md`.
 
 ## Regenerar y revisar
 

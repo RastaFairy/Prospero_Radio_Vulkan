@@ -40,7 +40,8 @@ else {
 Write-Host "==> Prospero Radio Vulkan / WSL2 $Distro / mode=$Mode"
 Write-Host "    Windows root: $Root"
 Write-Host "    WSL root:     $WslRoot"
-Write-Host "    Linux build:  ~/.cache/prospero-radio-modernized"
+$LinuxBuildRoot = '~/.cache/prospero-radio-modernized'
+Write-Host "    Linux build:  $LinuxBuildRoot"
 
 # The Windows project directory is only the control/output surface.
 # The actual Git checkout and native PS5 build are performed on WSL's

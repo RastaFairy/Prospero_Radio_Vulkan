@@ -12,7 +12,7 @@ from console_ux_patch import patch_console_ux
 
 UPSTREAM_SHA = "33898dd35375c1ae8370da137cfb6941d91c7684"
 UPSTREAM_SHA_CURRENT = "c0643ed66212a57819e04577d14528ba8238f197"  # v01.000.023 (allow this too)
-VERSION = "01.000.027"
+VERSION = "01.000.042"
 
 # Fork of the boilerplate allocation runtime (overlay/src/app_cpp_runtime.cpp).
 # 01.000.016 redirected title stderr into /download0/prospero-radio.log and gave
@@ -538,16 +538,33 @@ def patch_v027_radio_features(worktree: Path) -> None:
     )
     replace_once(
         input_header,
+        "struct radio_input_event_t {\n    radio_input_key_t key;\n    bool pressed;\n};",
+        "struct radio_input_event_t {\n    radio_input_key_t key;\n    bool pressed;\n"
+        "    bool touch_contact;\n    unsigned short touch_x;\n    unsigned short touch_y;\n};",
+    )
+    replace_once(
+        input_header,
         "void radio_input_shutdown(void);",
         "void radio_input_shutdown(void);\n"
-        "/* v027: touchpad state read from the pad report and lightbar color.\n"
-        " * Coordinates are 0..1919 x 0..1087; touch_down false means no finger.\n"
+        "/* DualSense touch point from ScePadData.touchData.touch[0].\n"
+        " * Accepted coordinates: 0..1919 x 0..1079; false means no live finger.\n"
         " * Both are best-effort: invalid report layouts leave them inert. */\n"
         "bool radio_input_touch(unsigned short *x, unsigned short *y);\n"
         "void radio_input_lightbar(int r, int g, int b);\n"
+        "int radio_input_jack_state(void);\n"
         "unsigned long long radio_input_milliseconds(void);",
     )
     input_cpp = worktree / "src" / "radio_input.cpp"
+    replace_once(
+        input_cpp,
+        '#include "radio_input.hpp"',
+        '#include "radio_input.hpp"\n#include <dlfcn.h>\n#include <stdio.h>',
+    )
+    replace_once(
+        input_cpp,
+        "queue[queue_write] = (radio_input_event_t){key, pressed};",
+        "queue[queue_write] = (radio_input_event_t){key, pressed, false, 0, 0};",
+    )
     replace_once(
         input_cpp,
         "    extern uint64_t SDL_GetTicks64(void);",
@@ -560,31 +577,47 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "static int32_t pad_handle = -1;\n"
         "static unsigned short touch_x = 0, touch_y = 0;\n"
         "static bool touch_finger = false;\n"
-        "static bool touch_valid = false;",
+        "static bool touch_valid = false;\n"
+        "static bool pad_click_down = false;\n"
+        "static uint64_t touch_sample_at;",
+    )
+    replace_once(
+        input_cpp,
+        "static void update_analog_action(",
+        "static void queue_touch_click(bool pressed, bool contact, unsigned short x, unsigned short y)\n"
+        "{\n"
+        "    queue_push(RADIO_INPUT_PAD_CLICK, pressed);\n"
+        "    const unsigned latest = (queue_write + INPUT_QUEUE_SIZE - 1U) % INPUT_QUEUE_SIZE;\n"
+        "    queue[latest].touch_contact = contact;\n"
+        "    queue[latest].touch_x = x;\n"
+        "    queue[latest].touch_y = y;\n"
+        "}\n\n"
+        "static void update_analog_action(",
     )
     replace_once(
         input_cpp,
         "    button_state = current;\n",
         "    button_state = current;\n"
-        "\n"
-        "    /* Touchpad: click is bit 20 of the button mask; the finger block\n"
-        "     * sits at 0x20 (counter u16, status, then id+x+y slots). The\n"
-        "     * validity gate keeps the feature inert on unknown layouts. */\n"
-        "    if ((current & UINT32_C(0x00100000)) != 0)\n"
-        "        queue_push(RADIO_INPUT_PAD_CLICK, true);\n"
-        "    else if (button_state != 0)\n"
-        "        queue_push(RADIO_INPUT_PAD_CLICK, false);\n"
-        "    if (sample[0x20] != 0 || sample[0x21] != 0)\n"
+        "    touch_finger = false;\n"
+        "    /* ScePadData.touchData starts at 0x34; first touch x/y/id at 0x3c/0x3e/0x40. */\n"
+        "    if (sample[0x34] != 0)\n"
         "    {\n"
-        "        const unsigned short px = (unsigned short)(sample[0x25] | (sample[0x26] << 8));\n"
-        "        const unsigned short py = (unsigned short)(sample[0x27] | (sample[0x28] << 8));\n"
-        "        if (px < 1920 && py < 1080)\n"
+        "        const unsigned short px = (unsigned short)(sample[0x3c] | ((unsigned)sample[0x3d] << 8));\n"
+        "        const unsigned short py = (unsigned short)(sample[0x3e] | ((unsigned)sample[0x3f] << 8));\n"
+        "        if ((sample[0x40] & 0x80U) == 0 && px < 1920 && py < 1080)\n"
         "        {\n"
         "            touch_x = px;\n"
         "            touch_y = py;\n"
-        "            touch_finger = (sample[0x24] & 0x80) == 0;\n"
+        "            touch_finger = true;\n"
         "            touch_valid = true;\n"
+        "            touch_sample_at = monotonic_milliseconds();\n"
         "        }\n"
+        "    }\n"
+        "    const bool click_down = !neutral && (current & UINT32_C(0x00100000)) != 0;\n"
+        "    if (click_down != pad_click_down)\n"
+        "    {\n"
+        "        queue_touch_click(click_down, touch_finger, touch_x, touch_y);\n"
+        "        pad_click_down = click_down;\n"
         "    }\n",
     )
     replace_once(
@@ -597,7 +630,8 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "\n"
         "bool radio_input_touch(unsigned short *x, unsigned short *y)\n"
         "{\n"
-        "    if (!touch_valid)\n"
+        "    if (!touch_valid || !touch_finger ||\n"
+        "        monotonic_milliseconds() - touch_sample_at > UINT64_C(120))\n"
         "        return false;\n"
         "    if (x)\n"
         "        *x = touch_x;\n"
@@ -612,10 +646,69 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "        return;\n"
         "    const unsigned char param[4] = {(unsigned char)r, (unsigned char)g,\n"
         "                                    (unsigned char)b, 0};\n"
-        "    scePadSetLightBar(pad_handle, param);\n"
+        "    const int result = scePadSetLightBar(pad_handle, param);\n"
+        "    if (result < 0)\n"
+        "        fprintf(stderr, \"[ProsperoRadio][lightbar] scePadSetLightBar failed result=%d\\n\", result);\n"
         "}\n"
         "\n"
-        "void radio_input_shutdown(void)\n{",
+        "int radio_input_jack_state(void)\n"
+        "{\n"
+        "    using jack_state_fn = int (*)(int32_t, int32_t *);\n"
+        "    static jack_state_fn query = nullptr;\n"
+        "    static bool lookup_done = false;\n"
+        "    static int cached_state = -1;\n"
+        "    static uint64_t next_probe = 0;\n"
+        "    const uint64_t now = SDL_GetTicks64();\n"
+        "    if (now < next_probe)\n"
+        "        return cached_state;\n"
+        "    next_probe = now + UINT64_C(250);\n"
+        "    if (!lookup_done)\n"
+        "    {\n"
+        "        lookup_done = true;\n"
+        "        void *symbol = dlsym(RTLD_DEFAULT, \"scePadGetJackState\");\n"
+        "        if (symbol == nullptr)\n"
+        "        {\n"
+        "            void *pad_module = dlopen(\"libScePad.sprx\", RTLD_NOW | RTLD_NOLOAD);\n"
+        "            if (pad_module != nullptr)\n"
+        "            {\n"
+        "                symbol = dlsym(pad_module, \"scePadGetJackState\");\n"
+        "                dlclose(pad_module);\n"
+        "            }\n"
+        "        }\n"
+        "        query = reinterpret_cast<jack_state_fn>(symbol);\n"
+        "        fprintf(stderr, \"[input] scePadGetJackState %s\\n\", query ? \"resolved\" : \"not exported\");\n"
+        "    }\n"
+        "    if (query == nullptr)\n"
+        "        return cached_state;\n"
+        "    int raw_state = 0;\n"
+        "    const int result = query(pad_handle, &raw_state);\n"
+        "    if (result < 0)\n"
+        "        return cached_state;\n"
+        "    const int connected = raw_state != 0 ? 1 : 0;\n"
+        "    if (connected != cached_state)\n"
+        "        fprintf(stderr, \"[input] controller jack=%s raw=%d result=%d\\n\",\n"
+        "                connected ? \"connected\" : \"open\", raw_state, result);\n"
+        "    cached_state = connected;\n"
+        "    return cached_state;\n"
+        "}\n"
+        "\n"
+        "void radio_input_shutdown(void)\n{\n    radio_input_lightbar(0, 0, 0);",
+    )
+    reset_marker = (
+        "    left_stick_key = -1;\n    left_stick_repeat_at = 0;\n"
+        "    right_stick_key = -1;\n    right_stick_repeat_at = 0;"
+    )
+    input_text = input_cpp.read_text(encoding="utf-8")
+    if input_text.count(reset_marker) != 2:
+        raise RuntimeError("Expected input state reset in init and shutdown")
+    input_cpp.write_text(
+        input_text.replace(
+            reset_marker,
+            reset_marker
+            + "\n    pad_click_down = false;\n    touch_finger = false;\n"
+            + "    touch_valid = false;\n    touch_sample_at = 0;",
+        ),
+        encoding="utf-8",
     )
 
     # ---- service: 5-band biquad EQ on the PCM path ------------------------
@@ -795,9 +888,6 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "    \"<body style='background:#1a120b;color:#f4be76;font-family:sans-serif;text-align:center;padding-top:3em'>\"\n"
         "    \"<h1>ProsperoRadio AUX</h1><textarea id=m rows=14 style='width:90%' placeholder='Pega aqui tu lista M3U'></textarea>\"\n"
         "    \"<br><button style='font-size:1.4em;padding:.5em 2em;margin:1em' onclick=\\\"fetch('/list',{method:'POST',body:document.getElementById('m').value}).then(()=>alert('Lista enviada'))\\\">ENVIAR A LA PS5</button>\";\n"
-        "static const char AUX_OK[] =\n"
-        "    \"HTTP/1.1 200 OK\\r\\nContent-Type: text/plain\\r\\n\\r\\nOK\";\n"
-        "\n"
         "static void aux_count_m3u(void)\n"
         "{\n"
         "    FILE *f = fopen(\"/download0/radio-aux.m3u\", \"rb\");\n"
@@ -894,48 +984,153 @@ def patch_v027_radio_features(worktree: Path) -> None:
     replace_once(
         service_cpp,
         "#include \"pcm_queue.hpp\"",
-        "#include \"pcm_queue.hpp\"\n#include <math.h>\n#include <string.h>\n#include <stdio.h>",
+        "#include \"pcm_queue.hpp\"\n#include <errno.h>\n#include <math.h>\n#include <string.h>\n#include <stdio.h>\n#include <stdlib.h>",
     )
 
 
-def patch_catalog_paging(worktree: Path) -> None:
-    """v028: the station list pages through the whole catalog, but query_page
-    keeps only the requested page in g_stations. get_station/play now fall
-    back to the catalog store (same popular order) so every global index in
-    the 57k catalog resolves, not just the last page."""
+def patch_aux_server(worktree: Path) -> None:
+    """Delegate AUX lifecycle and file transfer to the named payload RPC API."""
     service_cpp = worktree / "src" / "radio_service.cpp"
+    text = service_cpp.read_text(encoding="utf-8")
+    start_marker = "/* --- v027: AUX ingest server (best-effort POSIX sockets) -------------- */"
+    end_marker = "void radio_service_eq_process(int16_t *frames, unsigned count);"
+    if text.count(start_marker) != 1:
+        raise RuntimeError("Expected exactly one generated AUX server block")
+    start = text.index(start_marker)
+    end = text.find(end_marker, start)
+    if end < 0:
+        raise RuntimeError("Generated AUX server block has no EQ boundary")
+    end += len(end_marker)
+    replacement = r"""static int g_aux_stations = -1;
+
+static void aux_count_m3u(void)
+{
+    FILE *file = fopen("/download0/radio-aux.m3u", "rb");
+    if (file == nullptr)
+    {
+        g_aux_stations = -1;
+        return;
+    }
+    char line[1024];
+    int count = 0;
+    while (fgets(line, sizeof(line), file) != nullptr)
+    {
+        const char *value = line;
+        while (*value == ' ' || *value == '\t')
+            ++value;
+        if (strncmp(value, "http://", 7) == 0 || strncmp(value, "https://", 8) == 0)
+            ++count;
+    }
+    fclose(file);
+    g_aux_stations = count;
+}
+
+void radio_service_aux_start(void)
+{
+    const bool ready = radio_payload_bridge_aux_start();
+    aux_count_m3u();
+    fprintf(stderr, "[AUX] payload server start %s port=7000\n", ready ? "PASS" : "FAIL");
+}
+
+bool radio_service_aux_running(void)
+{
+    return radio_payload_bridge_aux_running();
+}
+
+int radio_service_aux_stations(void)
+{
+    aux_count_m3u();
+    return g_aux_stations;
+}
+
+void radio_service_eq_process(int16_t *frames, unsigned count);"""
+    service_cpp.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
+
+def patch_catalog_paging(worktree: Path) -> None:
+    """Resolve global list indices against the exact active catalog view."""
+    service_cpp = worktree / "src" / "radio_service.cpp"
+    service_hpp = worktree / "include" / "radio_service.hpp"
+    replace_once(
+        service_hpp,
+        "bool radio_service_get_station(unsigned index, radio_station_t * out_station);",
+        "bool radio_service_get_station(unsigned index, radio_station_t * out_station);\n"
+        "bool radio_service_get_station_by_uuid(const char *uuid, radio_station_t *out_station);\n"
+        "bool radio_service_play_uuid(const char *uuid);\n"
+        "bool radio_service_play_external(const radio_station_t *station);",
+    )
+    store_hpp = worktree / "include" / "radio_catalog_store.hpp"
+    replace_once(
+        store_hpp,
+        "size_t radio_catalog_store_query_stations(\n",
+        "bool radio_catalog_store_get_station_by_uuid(radio_catalog_store_t *store,\n"
+        "                                             const char *uuid,\n"
+        "                                             radio_station_t *out_station);\n"
+        "size_t radio_catalog_store_query_stations(\n",
+    )
+    store_cpp = worktree / "src" / "radio_catalog_store.cpp"
+    replace_once(
+        store_cpp,
+        "size_t radio_catalog_store_query_stations(radio_catalog_store_t *store,",
+        """bool radio_catalog_store_get_station_by_uuid(radio_catalog_store_t *store,
+                                                   const char *uuid,
+                                                   radio_station_t *out_station)
+{
+    if (store == nullptr || uuid == nullptr || *uuid == '\\0' || out_station == nullptr)
+        return false;
+    sqlite3_stmt *statement = nullptr;
+    if (!prepare(store, "SELECT " STATION_COLUMNS " FROM stations s WHERE s.uuid=?1 LIMIT 1",
+                 &statement) ||
+        sqlite3_bind_text(statement, 1, uuid, -1, SQLITE_TRANSIENT) != SQLITE_OK)
+    {
+        sqlite3_finalize(statement);
+        return false;
+    }
+    const int result = sqlite3_step(statement);
+    const bool found = result == SQLITE_ROW;
+    if (found)
+        read_station(statement, out_station);
+    store->error = result == SQLITE_DONE || result == SQLITE_ROW ? SQLITE_OK : result;
+    sqlite3_finalize(statement);
+    return found;
+}
+
+size_t radio_catalog_store_query_stations(radio_catalog_store_t *store,""",
+    )
     replace_once(
         service_cpp,
+        "static unsigned g_station_count;",
+        "static unsigned g_station_count;\n"
+        "static unsigned g_station_page_offset;\n"
+        "static radio_catalog_query_t g_view_query;\n"
+        "static bool g_view_query_enabled;\n"
+        "static radio_catalog_order_t g_view_order = RADIO_CATALOG_ORDER_POPULAR;\n"
+        "static bool g_view_favorites_only;",
+    )
+    replace_function(
+        service_cpp,
+        "bool radio_service_get_station(unsigned index, radio_station_t *out_station)",
         """bool radio_service_get_station(unsigned index, radio_station_t *out_station)
 {
     if (out_station == nullptr)
         return false;
     SDL_LockMutex(g_state_mutex);
-    const bool found = index < g_station_count;
+    const bool found = index >= g_station_page_offset &&
+                       index - g_station_page_offset < g_station_count;
+    const radio_catalog_query_t query = g_view_query;
+    const bool query_enabled = g_view_query_enabled;
+    const radio_catalog_order_t order = g_view_order;
+    const bool favorites_only = g_view_favorites_only;
     if (found)
-        *out_station = g_stations[index];
-    SDL_UnlockMutex(g_state_mutex);
-    return found;
-}""",
-        """bool radio_service_get_station(unsigned index, radio_station_t *out_station)
-{
-    if (out_station == nullptr)
-        return false;
-    SDL_LockMutex(g_state_mutex);
-    const bool found = index < g_station_count;
-    if (found)
-        *out_station = g_stations[index];
+        *out_station = g_stations[index - g_station_page_offset];
     SDL_UnlockMutex(g_state_mutex);
     if (found)
         return true;
-    /* v028: the global index may live beyond the last query page - resolve
-     * it from the catalog store in the same popular order the views use. */
     if (g_store_mutex == nullptr)
         return false;
     SDL_LockMutex(g_store_mutex);
     radio_station_t fetched{};
     const size_t loaded = radio_catalog_store_query_stations(
-        &g_catalog_store, nullptr, RADIO_CATALOG_ORDER_POPULAR, false, index,
+        &g_catalog_store, query_enabled ? &query : nullptr, order, favorites_only, index,
         &fetched, 1U);
     const int store_error = radio_catalog_store_error(&g_catalog_store);
     SDL_UnlockMutex(g_store_mutex);
@@ -947,41 +1142,261 @@ def patch_catalog_paging(worktree: Path) -> None:
     )
     replace_once(
         service_cpp,
-        """    SDL_LockMutex(g_state_mutex);
-    if (station_index >= g_station_count)
-    {
-        SDL_UnlockMutex(g_state_mutex);
-        free(station);
-        return;
-    }
-    *station = g_stations[station_index];""",
-        """    bool from_store = false;
+        "bool radio_service_query_page(const radio_catalog_query_t *query, radio_catalog_order_t order,",
+        """bool radio_service_get_station_by_uuid(const char *uuid, radio_station_t *out_station)
+{
+    if (uuid == nullptr || *uuid == '\\0' || out_station == nullptr || g_store_mutex == nullptr)
+        return false;
+    SDL_LockMutex(g_store_mutex);
+    const bool found = radio_catalog_store_get_station_by_uuid(&g_catalog_store, uuid, out_station);
+    const int store_error = radio_catalog_store_error(&g_catalog_store);
+    SDL_UnlockMutex(g_store_mutex);
+    return found && store_error == 0;
+}
+
+bool radio_service_query_page(const radio_catalog_query_t *query, radio_catalog_order_t order,""",
+    )
+    replace_once(
+        service_cpp,
+        "g_station_count = (unsigned)loaded;\n    g_status.station_count = g_station_count;",
+        "g_station_count = (unsigned)loaded;\n"
+        "    g_station_page_offset = offset;\n"
+        "    g_view_query = query != nullptr ? *query : radio_catalog_query_t{};\n"
+        "    g_view_query_enabled = query != nullptr;\n"
+        "    g_view_order = order;\n"
+        "    g_view_favorites_only = favorites_only;\n"
+        "    g_status.station_count = (unsigned)total;",
+    )
+    replace_once(
+        service_cpp,
+        "            g_status.playing_index = (unsigned)playing;",
+        "            g_status.playing_index = offset + (unsigned)playing;",
+    )
+    replace_function(
+        service_cpp,
+        "bool radio_service_station_is_playing(unsigned index)",
+        """bool radio_service_station_is_playing(unsigned index)
+{
+    radio_station_t station{};
+    if (!radio_service_get_station(index, &station))
+        return false;
     SDL_LockMutex(g_state_mutex);
-    if (station_index >= g_station_count)
+    const bool active = g_status.playback_state != RADIO_PLAYBACK_STOPPED &&
+                        g_status.playback_state != RADIO_PLAYBACK_ERROR;
+    const bool playing = active && g_have_playing_station &&
+                         strcmp(station.uuid, g_playing_station.uuid) == 0;
+    SDL_UnlockMutex(g_state_mutex);
+    return playing;
+}""",
+    )
+    replace_function(
+        service_cpp,
+        "void radio_service_play(unsigned station_index)",
+        """static bool start_station_playback(const radio_station_t *source, unsigned station_index)
+{
+    if (source == nullptr)
+        return false;
+    if (SDL_AtomicGet(&g_playback_running))
     {
-        SDL_UnlockMutex(g_state_mutex);
-        /* v028: resolve global indices beyond the last page from the store. */
-        if (g_store_mutex == nullptr)
-        {
-            free(station);
-            return;
-        }
-        SDL_LockMutex(g_store_mutex);
-        const size_t loaded = radio_catalog_store_query_stations(
-            &g_catalog_store, nullptr, RADIO_CATALOG_ORDER_POPULAR, false,
-            station_index, station, 1U);
-        const int store_error = radio_catalog_store_error(&g_catalog_store);
-        SDL_UnlockMutex(g_store_mutex);
-        if (store_error != 0 || loaded == 0U)
-        {
-            free(station);
-            return;
-        }
-        from_store = true;
         SDL_LockMutex(g_state_mutex);
+        const bool finishing = g_status.playback_state == RADIO_PLAYBACK_STOPPED ||
+                               g_status.playback_state == RADIO_PLAYBACK_ERROR;
+        SDL_UnlockMutex(g_state_mutex);
+        if (finishing)
+        {
+            while (SDL_AtomicGet(&g_playback_running))
+                SDL_Delay(1);
+        }
+        else
+        {
+            radio_service_stop();
+            return false;
+        }
     }
-    if (!from_store)
-        *station = g_stations[station_index];""",
+    auto *station = static_cast<radio_station_t *>(malloc(sizeof(radio_station_t)));
+    if (station == nullptr)
+        return false;
+    *station = *source;
+    SDL_LockMutex(g_state_mutex);
+    g_playing_station = *station;
+    g_have_playing_station = true;
+    g_status.playing_index = station_index;
+    g_status.playback_state = RADIO_PLAYBACK_CONNECTING;
+    g_status.sample_rate = 0;
+    g_status.channels = 0;
+    g_status.error_code = 0;
+    SDL_UnlockMutex(g_state_mutex);
+
+    SDL_AtomicSet(&g_stop_playback, 0);
+    SDL_AtomicSet(&g_playback_running, 1);
+    void *thread = nullptr;
+    if (scePthreadCreate(&thread, nullptr, playback_thread, station, "radio-audio") != 0)
+    {
+        SDL_AtomicSet(&g_playback_running, 0);
+        free(station);
+        SDL_LockMutex(g_state_mutex);
+        g_have_playing_station = false;
+        memset(&g_playing_station, 0, sizeof(g_playing_station));
+        SDL_UnlockMutex(g_state_mutex);
+        set_playback_state(RADIO_PLAYBACK_ERROR, -1, 0, 0);
+        return false;
+    }
+    scePthreadDetach(thread);
+    return true;
+}
+
+void radio_service_play(unsigned station_index)
+{
+    radio_station_t station{};
+    if (radio_service_get_station(station_index, &station))
+        (void)start_station_playback(&station, station_index);
+}
+
+bool radio_service_play_uuid(const char *uuid)
+{
+    radio_station_t station{};
+    return radio_service_get_station_by_uuid(uuid, &station) &&
+           start_station_playback(&station, UINT_MAX);
+}
+
+bool radio_service_play_external(const radio_station_t *station)
+{
+    if (station == nullptr || station->url[0] == '\\0' || station->uuid[0] == '\\0')
+        return false;
+    return start_station_playback(station, UINT_MAX);
+}""",
+    )
+
+
+def patch_payload_persistence(worktree: Path) -> None:
+    """Persist cache/preferences through the private payload filesystem bridge."""
+    service_cpp = worktree / "src" / "radio_service.cpp"
+    replace_once(
+        service_cpp,
+        '#include "radio_catalog_store.hpp"',
+        '#include "radio_catalog_store.hpp"\n#include "payload_probe.hpp"',
+    )
+
+    store_hpp = worktree / "include" / "radio_catalog_store.hpp"
+    replace_once(
+        store_hpp,
+        "bool radio_catalog_store_set_favorite(radio_catalog_store_t * store,\n"
+        "                                      const char * uuid, bool favorite);",
+        "bool radio_catalog_store_set_favorite(radio_catalog_store_t * store,\n"
+        "                                      const char * uuid, bool favorite);\n"
+        "bool radio_catalog_store_clear_favorites(radio_catalog_store_t * store);",
+    )
+    store_cpp = worktree / "src" / "radio_catalog_store.cpp"
+    replace_once(
+        store_cpp,
+        "size_t radio_catalog_store_favorite_count(radio_catalog_store_t *store)",
+        "bool radio_catalog_store_clear_favorites(radio_catalog_store_t * store)\n"
+        "{\n"
+        "    return store != nullptr && execute(store, \"DELETE FROM favorites\");\n"
+        "}\n\n"
+        "size_t radio_catalog_store_favorite_count(radio_catalog_store_t *store)",
+    )
+    replace_once(
+        service_cpp,
+        """    if (load_favorites_file())
+    {
+        for (unsigned i = 0U; i < g_favorite_count; ++i)
+            radio_catalog_store_set_favorite(&g_catalog_store, g_favorites[i], true);
+        return true;
+    }""",
+        """    if (load_favorites_file())
+    {
+        /* The durable file is authoritative, including removals and an empty list. */
+        if (!radio_catalog_store_clear_favorites(&g_catalog_store))
+            return false;
+        for (unsigned i = 0U; i < g_favorite_count; ++i)
+            radio_catalog_store_set_favorite(&g_catalog_store, g_favorites[i], true);
+        return true;
+    }""",
+    )
+    replace_once(
+        service_cpp,
+        "static void *refresh_thread(void *task_data)",
+        """static bool persist_catalog_snapshot_to_payload(void)
+{
+    const char *path = \"/download0/radio-browser-persist.tmp.sqlite3\";
+    unlink(path);
+    radio_catalog_store_t snapshot = {};
+    SDL_LockMutex(g_store_mutex);
+    const bool opened = radio_catalog_store_open(&snapshot, path);
+    const bool copied = opened && radio_catalog_store_backup(&snapshot, &g_catalog_store) &&
+                        radio_catalog_store_integrity_check(&snapshot);
+    radio_catalog_store_close(&snapshot);
+    SDL_UnlockMutex(g_store_mutex);
+    const bool stored = copied &&
+                        radio_payload_bridge_push_file(RADIO_PAYLOAD_CATALOG, path);
+    unlink(path);
+    fprintf(stderr, \"[ProsperoRadio][persistence] catalog snapshot %s\\n\",
+            stored ? \"stored in /data/radio\" : \"bridge copy failed\");
+    return stored;
+}
+
+static void *refresh_thread(void *task_data)""",
+    )
+    replace_once(
+        service_cpp,
+        """            if (task.full_sync)
+                load_facet_snapshots();
+            SDL_LockMutex(g_state_mutex);""",
+        """            if (task.full_sync)
+            {
+                load_facet_snapshots();
+                (void)persist_catalog_snapshot_to_payload();
+            }
+            SDL_LockMutex(g_state_mutex);""",
+    )
+    replace_function(
+        service_cpp,
+        "bool radio_service_toggle_favorite(unsigned station_index)",
+        """bool radio_service_toggle_favorite(unsigned station_index)
+{
+    radio_station_t station{};
+    if (!radio_service_get_station(station_index, &station))
+        return false;
+    const char *uuid = station.uuid;
+    SDL_LockMutex(g_state_mutex);
+    const bool now_favorite = !favorite_unlocked(uuid);
+    const bool have_capacity = !now_favorite || ensure_favorite_capacity(g_favorite_count + 1U);
+    SDL_UnlockMutex(g_state_mutex);
+    if (!have_capacity)
+        return false;
+
+    SDL_LockMutex(g_state_mutex);
+    if (now_favorite)
+    {
+        if (!favorite_unlocked(uuid))
+            SDL_strlcpy(g_favorites[g_favorite_count++], uuid, sizeof(g_favorites[0]));
+    }
+    else
+    {
+        for (unsigned i = 0U; i < g_favorite_count; ++i)
+        {
+            if (strcmp(g_favorites[i], uuid) != 0)
+                continue;
+            if (i + 1U < g_favorite_count)
+                memmove(g_favorites[i], g_favorites[i + 1U],
+                        (g_favorite_count - i - 1U) * sizeof(g_favorites[0]));
+            --g_favorite_count;
+            break;
+        }
+    }
+    SDL_UnlockMutex(g_state_mutex);
+    if (!save_favorites_file())
+        return false;
+    SDL_LockMutex(g_store_mutex);
+    const bool store_updated =
+        radio_catalog_store_set_favorite(&g_catalog_store, uuid, now_favorite);
+    SDL_UnlockMutex(g_store_mutex);
+    if (!store_updated)
+        return false;
+    (void)radio_payload_bridge_push(RADIO_PAYLOAD_FAVORITES);
+    return now_favorite;
+}""",
     )
 
 
@@ -1520,9 +1935,16 @@ def main() -> int:
         print(f"         Proceeding anyway (compatibility mode)", file=sys.stderr)
 
     apply_ui_overlay(worktree, overlay)
+    for relative in ("include/payload_probe.hpp", "src/payload_probe.cpp"):
+        source = overlay / relative
+        destination = worktree / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
     patch_controller_input(worktree)
     patch_v027_radio_features(worktree)
+    patch_aux_server(worktree)
     patch_catalog_paging(worktree)
+    patch_payload_persistence(worktree)
     patch_audio_service(worktree)
     # The physical-radio frontend ships complete sources: replace the upstream
     # application layer wholesale instead of anchoring patches to it.
@@ -1562,9 +1984,11 @@ def main() -> int:
             str(worktree / "src/radio_input.cpp"),
             str(worktree / "src/radio_service.cpp"),
             str(worktree / "src/radio_app.cpp"),
+            str(worktree / "src/payload_probe.cpp"),
             str(worktree / "include/radio_input.hpp"),
             str(worktree / "include/radio_service.hpp"),
             str(worktree / "include/radio_app.hpp"),
+            str(worktree / "include/payload_probe.hpp"),
         ],
         cwd=worktree,
         check=True,
@@ -1633,7 +2057,7 @@ def main() -> int:
     print("  Graphics    : RmlUi -> Vulkan 1.0 -> PS5_Vulkan -> AGC/VideoOut")
     print("  SDL         : input/time only; SDL software renderer removed from frame path")
     print("  UI          : 3-column x 2-row physical-radio redesign")
-    print("  Controls    : left stick volume; right stick tuning; D-pad lists; triangle settings")
+    print("  Controls    : left stick volume; right stick tuning; touch presets; AUX import on 7000")
     return 0
 
 

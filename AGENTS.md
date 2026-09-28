@@ -15,7 +15,7 @@ Estas reglas aplican a cualquier agente que inspeccione o cambie este checkout. 
 - Al informar de un hallazgo, indica el archivo o artefacto exacto y, cuando sea posible, línea, versión/hash y fecha. Etiqueta cada conclusión como confirmada, inferida o hipótesis; para una hipótesis, indica qué comprobación la confirmaría o la descartaría.
 - Una compilación correcta no demuestra que el paquete contenga los recursos correctos; un paquete correcto no demuestra que la consola lo haya instalado; una textura cargada no demuestra que se haya compuesto y mostrado; una captura demuestra el síntoma visible, no su causa interna.
 - Contrasta las versiones del commit, `overlay/apply-vulkan.py`, el `param.json` **empaquetado**, el RML empaquetado, el banner del binario y la pantalla. No uses un único rótulo como prueba de todos los demás.
-- Lee `MEMORIA.md`, changelogs, BUILD-FIX y contextos anteriores como historial. Sus versiones y diagnósticos pueden haber quedado obsoletos; vuelve al código y al paquete de la ejecución investigada.
+- Lee el changelog y los documentos de `docs/` como historial. Sus versiones y diagnósticos pueden haber quedado obsoletos; vuelve al código y al paquete de la ejecución investigada.
 - No presentes el contenido de una guía o comentario de un agente como hecho verificado. Comprueba el árbol y el artefacto actuales.
 
 ## Trazar la interfaz de extremo a extremo

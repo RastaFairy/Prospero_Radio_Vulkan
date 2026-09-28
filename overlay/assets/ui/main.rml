@@ -26,6 +26,7 @@
                     <span id="home-name">Tuning...</span>
                     <span id="home-meta">Turn the TUNING dial to find a station</span>
                     <span id="home-status">READY</span>
+                    <span id="headphone-status" class="jack-status">JACK N/A</span>
                     <span id="chip-p0" class="chip chip-off">P1</span>
                     <span id="chip-p1" class="chip chip-off">P2</span>
                     <span id="chip-p2" class="chip chip-off">P3</span>
@@ -42,6 +43,11 @@
 
                 <div id="screen-list" class="hidden">
                     <span id="list-title">RADIO BROWSER</span>
+                    <div id="list-tabs">
+                        <span id="list-tab-radio" class="list-tab">RADIO</span>
+                        <span id="list-tab-favorites" class="list-tab">MEM / FAVORITOS</span>
+                        <span id="list-tab-aux" class="list-tab">AUX M3U</span>
+                    </div>
                     <div id="list-row-0" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-0" class="list-name"></span><span id="list-meta-0" class="list-meta"></span><span id="list-fav-0" class="list-fav">&#9733;</span></div>
                     <div id="list-row-1" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-1" class="list-name"></span><span id="list-meta-1" class="list-meta"></span><span id="list-fav-1" class="list-fav">&#9733;</span></div>
                     <div id="list-row-2" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-2" class="list-name"></span><span id="list-meta-2" class="list-meta"></span><span id="list-fav-2" class="list-fav">&#9733;</span></div>
@@ -67,12 +73,12 @@
                 <div id="screen-aux" class="hidden">
                 <span class="panel-kicker">ENTRADA AUXILIAR</span>
                 <span class="panel-big" id="aux-url">PUERTO 7000</span>
-                <span class="panel-note" id="aux-note">Sube tu lista M3U desde el movil o el PC</span>
+                <span class="panel-note" id="aux-note">Elige el archivo .m3u desde tu movil o PC</span>
             </div>
             <div id="screen-barrido" class="hidden">
                 <span class="panel-kicker">BARRIDO DE LISTAS</span>
                 <span class="panel-big" id="barrido-status">SIN LISTAS NUEVAS</span>
-                <span class="panel-note">La ingesta completa de listas llega en v027</span>
+                <span class="panel-note">Cross: abrir lista importada | Circle: volver</span>
             </div>
             <div id="screen-eq" class="hidden">
                 <span class="panel-kicker">ECUALIZADOR</span>

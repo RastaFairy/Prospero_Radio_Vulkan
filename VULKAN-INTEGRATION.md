@@ -22,8 +22,9 @@ Desde Ubuntu/WSL:
 bash ./build.sh ffpfsc
 ```
 
-Modos admitidos: `ffpfsc` (imagen comprimida), `app` (carpeta de aplicación), `check`
-y `clean`. `packages` se acepta como alias antiguo de `ffpfsc`. El build ejecuta el
+Modos admitidos: `ffpfsc` (imagen comprimida), `probe-ffpfsc` (variante de
+diagnóstico con payload local), `app` (carpeta de aplicación), `check` y `clean`.
+`packages` se acepta como alias antiguo de `ffpfsc`. El build ejecuta el
 overlay, prepara el driver y copia los resultados locales a `out/`. Mantiene el
 checkout upstream y la caché de dependencias fuera del árbol Git. Los resultados de
 `out/` no se deben subir al repositorio.
@@ -56,11 +57,17 @@ runtime y la captura de PS5.
 
 ## Estado de validación
 
-La fuente actual declara 01.000.027. La última prueba de build guardada en
-`out/build028.log` finalizó con error del gate porque no encontró
-`sce_sys/param.json` bajo `out/PPSA99001/`. Por ello la versión actual no se presenta
-como release limpia. Consulta [`docs/PENDIENTES.md`](docs/PENDIENTES.md) para el
-trabajo que bloquea una nueva distribución y los problemas pendientes en hardware.
+La fuente actual declara `01.000.042`. El flujo `./build.sh ffpfsc` terminó con
+código 0; el empaquetador informó 0 errores y 0 warnings, y el gate del paquete
+recién generado registró 14 aprobados, 0 warnings y 0 fallos. La carpeta y el
+FFPFSC locales se encuentran bajo `out/prospero-radio-01.000.042/`.
+
+Las capturas del usuario del 28-09-2026 muestran `01.000.042` en el LCD y la app
+activa en consola. La validación es parcial: el texto del estado de auriculares
+continúa como `JACK N/A`, hay defectos visibles en las pestañas de fuentes y se
+reporta duplicación al volver a enviar una M3U. No hay una comparación del hash del
+paquete instalado con el generado localmente. Consulta
+[`docs/PENDIENTES.md`](docs/PENDIENTES.md) para los resultados por función.
 
 La integración se basa en [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan),
 Mesa, [RmlUi](https://github.com/mikke89/RmlUi) y SDL. Los scripts de preparación y

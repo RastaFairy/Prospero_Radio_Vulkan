@@ -232,7 +232,7 @@ are routed to the general decoder first. A CELT packet rejected with native
 result `-502` is retried once with `libSceOpusCeltDec`; decoder failover keeps
 the existing PCM sink alive and does not reapply the logical stream's pre-skip.
 AAC, MP3, Opus, Vorbis, and FLAC are currently advertised; planned codec and delivery
-work is tracked in [`ROADMAP.md`](../ROADMAP.md). The completed hardware-first
+work is tracked in [`PENDIENTES.md`](PENDIENTES.md). The completed hardware-first
 review found no callable native Vorbis or FLAC path on the current firmware
 baseline. Vorbis therefore uses the validated bounded `stb_vorbis` CPU path,
 while native and Ogg-encapsulated FLAC use bounded CPU decoding through

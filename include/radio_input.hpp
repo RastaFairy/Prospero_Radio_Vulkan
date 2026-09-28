@@ -31,6 +31,9 @@ struct radio_input_event_t
 {
     radio_input_key_t key;
     bool pressed;
+    bool touch_contact;
+    unsigned short touch_x;
+    unsigned short touch_y;
 };
 
 bool radio_input_init(void);
@@ -38,9 +41,8 @@ void radio_input_poll(void);
 bool radio_input_next(radio_input_event_t *event);
 bool radio_input_pressed(radio_input_key_t key);
 void radio_input_shutdown(void);
-/* v027: touchpad state read from the pad report and lightbar color.
- * Coordinates are 0..1919 x 0..1087; touch_down false means no finger.
- * Both are best-effort: invalid report layouts leave them inert. */
+/* DualSense touch point from ScePadData.touchData.touch[0]. Coordinates are
+ * accepted in the 1920x1080 UI space; false means no fresh live contact. */
 bool radio_input_touch(unsigned short *x, unsigned short *y);
 void radio_input_lightbar(int r, int g, int b);
 unsigned long long radio_input_milliseconds(void);

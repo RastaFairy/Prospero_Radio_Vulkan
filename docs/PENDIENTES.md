@@ -1,112 +1,47 @@
-# Pendientes para la siguiente versión
+# Pendientes de Prospero Radio
 
-Estado de referencia: árbol fuente fechado 2026-09-27. `overlay/apply-vulkan.py`
-y `sce_sys/param.json` indican **01.000.027**. Esta lista separa resultados
-comunicados por el autor de comprobaciones pendientes; no equivale a una certificación
-de release.
+## Línea base y evidencia
 
-## Ya observado como funcional en consola
+- Las capturas compartidas por el usuario muestran `01.000.039` en pantalla. Esa es la build de los síntomas: lista M3U con textos superpuestos, ajustes sobre fondo claro, pestaña AUX poco visible y estado de preset memorizado que no se distingue bien. No hay en el `out/` actual un paquete v039 con hash que vincule esas capturas a un artefacto local.
+- `01.000.041` se trató como candidata, pero no hay paquete v041 disponible en el `out/` actual ni una prueba atribuible a ella.
+- `01.000.042` se compiló y el gate del paquete recién ensamblado pasó: 14 aprobados, 0 warnings y 0 fallos. Las fotos del usuario del 28-09-2026 muestran el sello v042 en PS5; no se cotejó el hash del paquete instalado, así que es evidencia parcial, no una certificación completa.
+- El usuario confirmó previamente que EQ, reproducción, lista de estaciones más allá de la primera página, favoritos del catálogo, lógica de mando y color RGB del DualSense funcionan en las revisiones que probó. No inferir que toda esa evidencia corresponde a v042.
+- No reintroducir ajustes ni selector de temas: el usuario los descartó. El indicador del jack no debe fingir una detección física.
 
-El autor confirmó en la última prueba:
+## Pendientes por prioridad
 
-- El EQ permite edición y conserva sus valores.
-- La reproducción vuelve a producir audio de forma fiable.
-- La lista puede recorrer el catálogo completo, no solo la primera página.
-- El autor confirma que □ guarda favoritos entre las primeras siete emisoras, pero
-  falla al guardar emisoras posteriores. El arreglo aún no está implementado ni
-  validado.
+### P1 — Evitar duplicados al volver a importar una M3U
 
-La versión exacta instalada no se contrastó con el árbol fuente durante esa prueba.
-Hay que repetir estas comprobaciones al preparar una release.
+**Complejidad media · riesgo: crecimiento repetido del catálogo AUX y resultados confusos.** El usuario reporta que reenviar una lista con emisoras ya importadas vuelve a agregarlas. Hacer la importación idempotente usando la URL de stream normalizada como identidad; no fusionar solo por nombre, porque una emisora puede publicar URLs distintas (bitrate o formato). Conservar todas las nuevas entradas únicas y comprobar que dos importaciones idénticas no cambien el número de estaciones.
 
-## Bloqueantes
+### P1 — Corregir las etiquetas de las fuentes en el LCD
 
-### P0 — Cerrar la compilación y el gate del paquete
+**Complejidad media · riesgo: no identificar la lista activa o seleccionar otra por error.** Las capturas v042 muestran el rótulo central vacío en una vista y `MEM / FAVORITOS` solapado con `AUX M3U` en otra. Revisar ancho, posición, texto real de cada fuente, foco/selección y sincronía con el modelo; probar RADIO, FAVORITOS y AUX M3U con distintos largos y sin datos.
 
-- El intento registrado en `out/build028.log` creó el FFPFSC, pero acabó con error en
-  `overlay/tools/verify-package.py`: el gate no encontró
-  `out/PPSA99001/sce_sys/param.json`. Rastrear qué directorio produjo `make ffpfsc`,
-  verificar la carpeta desplegable recién generada y corregir el contrato entre el
-  build y el gate.
-- Volver a ejecutar el flujo completo en limpio y exigir salida correcta del build y
-  del gate. No etiquetar como release una compilación que termine en error.
-- Comparar la versión de `apply-vulkan.py`, `param.json`, RML, banner del ELF y los
-  recursos que entran realmente en el FFPFSC. Registrar SHA-256 y resultados.
-- Alinear GitHub Actions con el flujo overlay documentado o añadirle un job específico:
-  el workflow actual ejecuta objetivos `make` directamente y no demuestra que el
-  build overlay de `build.sh` ni su gate queden cubiertos en CI.
+### P1 — Probar persistencia de favoritos y presets AUX
 
-### P1 — Reconstruir Ajustes y el cambio de tema
+**Complejidad media-alta · riesgo: estado que se pierde al reiniciar o preset que apunta a otra URL.** El código v042 guarda snapshots externos y favoritos AUX. Verificar en consola guardar/quitar favorito, memorizar y recuperar P1/P2/P3 desde una lista M3U, comprobar título y URL y reiniciar la app.
 
-- En las pruebas recientes, Ajustes llegó a mostrarse como una tarjeta pequeña sobre
-  una pantalla blanca; en otras, algunas filas y rótulos se solapaban. Integrar los
-  ajustes en el LCD de la radio, respetar sus límites y mantener el foco claramente
-  visible.
-- El selector muestra nombres de acabados, pero el cambio no aplica de forma fiable
-  las texturas. Confirmar que Walnut, Silver y Graphite estén en el paquete, carguen
-  correctamente y cambien el frontal visible; si un tema no está disponible, no
-  presentarlo como seleccionable.
-- Comprobar navegación, confirmación y vuelta desde cada fila del menú en consola.
+### P2 — Mejorar contraste del encabezado web AUX
 
-### P1 — Corregir la entrada del panel táctil
+**Complejidad baja · riesgo: subtítulo superior ilegible en pantallas pequeñas o con brillo bajo.** En la captura del panel de carga, el texto de modelo situado a la derecha pierde contraste con el metal. Ajustar su color/contraste sin cambiar el estilo de panel trasero aprobado.
 
-- El mapeo actual de toques del DualSense no selecciona los presets esperados.
-- Contrastar offsets y estado de contacto con la estructura real del pad, detectar
-  transiciones de pulsación/liberación y separar cada zona/preset.
-- Verificarlo en hardware con un registro acotado de muestras; quitar el diagnóstico
-  verboso antes de una build normal.
+### P2 — Detección física del jack del DualSense
 
-### P1 — Hacer funcionar la importación AUX desde la red
+**Complejidad alta · API sin verificar.** La pantalla v042 aún muestra `JACK N/A` con el mando presente. La búsqueda dinámica del símbolo es tentativa; no afirmar detección física hasta obtener transiciones reproducibles al conectar y desconectar los auriculares en PS5.
 
-- El servidor de carga externa de listas no queda disponible en la consola.
-- Registrar los resultados reales de inicialización de red, `socket`, `bind`,
-  `listen` y aceptación de clientes; mostrar “listo” solo después de que el puerto
-  esté escuchando.
-- Probar una subida M3U desde otro dispositivo, respetar `Content-Length` y límites,
-  importar las entradas al catálogo y mostrar errores de URL/formato. Confirmar una
-  emisora conectándose a su URL real antes de indicar reproducción.
+### P2 — Cierre, payload y persistencia tras reinicio
 
-### P1 — Guardar favoritos en todas las páginas del catálogo
+**Complejidad alta · riesgo: listener o payload huérfano y datos no persistidos.** Repetir con klog y log del bridge: detener AUX/puerto 7000, cerrar el payload, cerrar con POWER y con el menú del sistema, y verificar `/data/radio` tras reabrir. El build no acredita permisos ni ciclo de vida en hardware.
 
-- En consola, □ permite guardar las primeras siete emisoras, pero no las que vienen
-  después.
-- Causa probable, inferida del código actual: `RadioApp::BuildList` crea índices de
-  catálogo globales (`list_start_ + row`) y `HandleInput` los pasa a
-  `radio_service_toggle_favorite`; sin embargo, `radio_service_query_page` guarda
-  solo la página en `g_stations` y `radio_service_toggle_favorite` rechaza cualquier
-  índice mayor o igual que `g_station_count` (cantidad de filas cargadas en esa
-  página). Confirmar esta discrepancia y corregir la resolución del UUID global sin
-  cambiar la identidad/orden de las emisoras.
-- Criterio de aceptación: guardar y quitar favoritos antes y después del límite de
-  página, cambiar de página/lista y volver, reiniciar la app y confirmar que la
-  selección persiste y corresponde a la emisora correcta. Validar en consola.
+### P2 — Revisar restos del menú de ajustes/temas
 
-## Pendientes de validación
+El usuario descartó reintroducir ajustes y temas. La v042 no los presenta en los botones principales, pero el árbol conserva elementos ocultos de settings y copia recursos de temas. En una limpieza de código futura, comprobar su alcance antes de retirarlos para no romper el build; no son una función aprobada para la interfaz actual.
 
-### P2 — Indicador de auriculares
+## Diferencias registradas
 
-La animación del conector no refleja de forma fiable la conexión. Identificar una API
-de sistema verificable para detectar la ruta/conexión de auriculares. Si el firmware
-no ofrece una señal accesible, cambiar el indicador para que represente un estado que
-la aplicación sí conozca, sin fingir detección física.
+- **01.000.039:** build mostrada en las capturas del usuario; lista/textos, ajustes y señalización de presets presentaron los síntomas anteriores.
+- **01.000.041:** candidata documentada para selector de fichero M3U y cambio de fuente en RADIO; no hay paquete v041 ni resultado de consola en el `out/` actual.
+- **01.000.042:** capturas en consola confirman el sello de versión, emisora y listas visibles. En esas capturas se observan las pestañas defectuosas y `JACK N/A`; el usuario reporta duplicados tras reimportar una M3U. El gate local pasó, pero la validación de hardware es parcial.
 
-### P2 — Cierre de la aplicación
-
-Un klog anterior registró `signal 12` durante el cierre. Volver a probar apagado y
-salida cooperativa desde el estado actual, varias veces y con reproducción activa e
-inactiva. Hasta entonces, tratar el cierre limpio como pendiente de regresión.
-
-### P2 — Validar emisoras de extremo a extremo
-
-La navegación por el catálogo completo está confirmada, pero el total del catálogo no
-demuestra que cada stream esté disponible. Al sintonizar, mostrar por separado
-selección, conexión, reproducción y error; probar URLs reales, cambios rápidos,
-timeouts y recuperación sin dejar el estado atascado en “Tuning”.
-
-## Criterio para cerrar una tarea
-
-Cada corrección debe tener evidencia en su nivel: diff/código fuente, recursos y
-metadatos generados, carpeta de app y FFPFSC, salida completa de compilación/gate, y
-captura o log de la consola para los comportamientos dependientes de hardware. Una
-compilación correcta no sustituye la prueba en PS5. Mantener las evidencias en los
-documentos de validación sin convertir una hipótesis en resultado confirmado.
+Registrar por separado código, paquete, hash, gate, klog y observación en PS5. La etiqueta en pantalla identifica la versión mostrada, no el hash instalado; el gate no demuestra audio, acceso LAN ni persistencia en `/data`.

@@ -11,7 +11,7 @@ out/*
 recovery/
 .deps/
 
-# --- Detailed machine history: summarized in MEMORIA.md, local-only ---
+# --- Local audit notes and machine logs ---
 BUILD-FIX*.md
 BUILD-FAILURE-FIX*.md
 BUILD-FIXLOG.md

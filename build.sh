@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Copyright (C) 2026 BlackBearReloaded
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 set -euo pipefail
 
 # This launcher is safe to invoke directly from /mnt/<drive> under WSL.
@@ -8,7 +11,11 @@ MODE="${1:-ffpfsc}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UPSTREAM_URL="https://github.com/blackbearreloaded/ProsperoRadio.git"
 UPSTREAM_SHA="33898dd35375c1ae8370da137cfb6941d91c7684"
-LINUX_WORKSPACE="${PROSPERO_BUILD_ROOT:-$HOME/.cache/prospero-radio-modernized}"
+if [[ -n "${PROSPERO_BUILD_ROOT:-}" ]]; then
+    LINUX_WORKSPACE="$PROSPERO_BUILD_ROOT"
+else
+    LINUX_WORKSPACE="$HOME/.cache/prospero-radio-modernized"
+fi
 HOST_ROOT="${PROSPERO_HOST_ROOT:-$SCRIPT_DIR}"
 STAGE_READY="${PROSPERO_STAGE_READY:-0}"
 
@@ -24,12 +31,18 @@ if [[ "$STAGE_READY" != "1" && "$SCRIPT_DIR" == /mnt/* ]]; then
     exec env \
         PROSPERO_BUILD_ROOT="$LINUX_WORKSPACE" \
         PROSPERO_HOST_ROOT="$SCRIPT_DIR" \
+        PROSPERO_OUTPUT_DIR="${PROSPERO_OUTPUT_DIR:-}" \
         PROSPERO_STAGE_READY=1 \
         bash "$STAGE_DIR/build.sh" "$MODE"
 fi
 
 ROOT_DIR="$HOST_ROOT"
 WORK_DIR="$LINUX_WORKSPACE/ProsperoRadio-$UPSTREAM_SHA"
+
+if [[ -n "${PROSPERO_OUTPUT_DIR:-}" && -e "$PROSPERO_OUTPUT_DIR" ]]; then
+    echo "Refusing to overwrite existing explicit output path: $PROSPERO_OUTPUT_DIR" >&2
+    exit 1
+fi
 
 mkdir -p "$ROOT_DIR/out" "$LINUX_WORKSPACE"
 
@@ -93,6 +106,7 @@ VULKAN_EXTRA_ARGS="${VULKAN_EXTRA_OBJECTS[*]:-}"
 # These are ordinary Make variables consumed by the original ProsperoRadio
 # toolchain. The original app sources and static service libraries remain in
 # the upstream Makefile; we only append the Vulkan SDK/driver pieces here.
+export APP_DEFINITIONS="${APP_DEFINITIONS:-}"
 export APP_INCLUDE_PATHS=".local/vulkan/include ${APP_INCLUDE_PATHS:-}"
 export APP_VULKAN_ARCHIVES="${VULKAN_LIB_ARGS}"
 export APP_EXTRA_OBJECTS="${VULKAN_EXTRA_ARGS} ${APP_EXTRA_OBJECTS:-}"
@@ -101,8 +115,15 @@ export APP_IMPORT_STUBS="${VULKAN_STUB_ARGS} ${APP_IMPORT_STUBS:-}"
 
 case "$MODE" in
     ffpfsc|packages)
-        # packages remains accepted as a legacy alias: only the compressed
-        # .ffpfsc is ever produced, never the duplicate .ffpkg.
+        # The regular installable build includes the named persistence bridge.
+        # Its runtime handoff is reported separately from compile/package success.
+        bash "$WORK_DIR/tools/setup-native-dependencies.sh" >/dev/null
+        payload_elf="$WORK_DIR/assets/payload/ProsperoRadioDataBridge.elf"
+        mkdir -p "${payload_elf%/*}"
+        "$WORK_DIR/.deps/native/ps5-payload-sdk/bin/prospero-clang" \
+            -O2 -Wall -Wextra -Werror -o "$payload_elf" \
+            "$SCRIPT_DIR/overlay/payloads/prospero_radio_data_bridge.c"
+        export APP_DEFINITIONS="${APP_DEFINITIONS:+$APP_DEFINITIONS }PROSPERO_DATA_BRIDGE_ENABLED"
         make ffpfsc
         ;;
     app)
@@ -122,8 +143,11 @@ case "$MODE" in
 esac
 
 if [[ "$MODE" == "ffpfsc" || "$MODE" == "packages" || "$MODE" == "app" || "$MODE" == "check" ]]; then
-    OUT_DIR="$ROOT_DIR/out"
-    rm -rf "$OUT_DIR/PPSA99001"
+    OUT_DIR="${PROSPERO_OUTPUT_DIR:-$ROOT_DIR/out}"
+    mkdir -p "$OUT_DIR"
+    if [[ -z "${PROSPERO_OUTPUT_DIR:-}" ]]; then
+        rm -rf "$OUT_DIR/PPSA99001"
+    fi
     cp -r "$WORK_DIR/dist/PPSA99001" "$OUT_DIR/"
     for artifact in "$WORK_DIR"/dist/PPSA99001.*; do
         [[ -e "$artifact" ]] || continue
