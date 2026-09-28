@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/radio-front-hybrid-preview.png" alt="Vista previa de Prospero Radio" width="90%">
+<img src="docs/prospero-radio-v042-portada.jpg" alt="Prospero Radio Vulkan 01.000.042" width="90%">
 
 # Prospero Radio Vulkan
 
@@ -11,7 +11,7 @@ Radio por internet para PS5 con una interfaz inspirada en un receptor clásico.
 ![estado](https://img.shields.io/badge/estado-validacion%20parcial-orange)
 ![licencia](https://img.shields.io/badge/licencia-GPL--3.0--or--later-orange)
 
-[Cambios](CHANGELOG.md) · [Pendientes](docs/PENDIENTES.md) · [Contribuir](CONTRIBUTING.md) · [Resumen de licencia (ES)](LICENSE-ES.md) · [Integración Vulkan](VULKAN-INTEGRATION.md) · [Problemas](https://github.com/RastaFairy/Prospero_Radio_Vulkan/issues)
+[Manual](docs/MANUAL-USUARIO.md) · [Cambios](CHANGELOG.md) · [Pendientes](docs/PENDIENTES.md) · [Créditos](docs/CREDITOS.md) · [Contribuir](CONTRIBUTING.md) · [Licencia (ES)](LICENSE-ES.md) · [Integración Vulkan](VULKAN-INTEGRATION.md) · [Problemas](https://github.com/RastaFairy/Prospero_Radio_Vulkan/issues)
 
 </div>
 
@@ -93,5 +93,6 @@ y conserva su licencia GPL-3.0-or-later. El texto íntegro está en inglés en
 [`LICENSE`](LICENSE); [`LICENSE-ES.md`](LICENSE-ES.md) ofrece un resumen informativo
 en castellano. La integración gráfica usa
 [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan), Mesa, RmlUi y SDL. Consulta
-`LICENSE` y los avisos de terceros incluidos en el repositorio para las condiciones
-de redistribución de cada componente.
+[`docs/CREDITOS.md`](docs/CREDITOS.md) para los créditos, y `LICENSE` junto a los
+avisos de terceros del repositorio para las condiciones de redistribución de cada
+componente.
