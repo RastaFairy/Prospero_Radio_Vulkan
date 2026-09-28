@@ -9,9 +9,9 @@ Radio por internet para PS5 con una interfaz inspirada en un receptor clásico.
 ![versión overlay](https://img.shields.io/badge/overlay-01.000.042-orange)
 ![plataforma](https://img.shields.io/badge/plataforma-PS5-00adef)
 ![estado](https://img.shields.io/badge/estado-validacion%20parcial-orange)
-![licencia](https://img.shields.io/badge/licencia-GPL--3.0-orange)
+![licencia](https://img.shields.io/badge/licencia-GPL--3.0--or--later-orange)
 
-[Cambios](CHANGELOG.md) · [Pendientes](docs/PENDIENTES.md) · [Integración Vulkan](VULKAN-INTEGRATION.md) · [Problemas](https://github.com/RastaFairy/Prospero_Radio_Vulkan/issues)
+[Cambios](CHANGELOG.md) · [Pendientes](docs/PENDIENTES.md) · [Contribuir](CONTRIBUTING.md) · [Resumen de licencia (ES)](LICENSE-ES.md) · [Integración Vulkan](VULKAN-INTEGRATION.md) · [Problemas](https://github.com/RastaFairy/Prospero_Radio_Vulkan/issues)
 
 </div>
 
@@ -89,7 +89,9 @@ locales. Consulta [`CHANGELOG.md`](CHANGELOG.md) y
 ## Licencia y créditos
 
 Este fork deriva de [ProsperoRadio de blackbearreloaded](https://github.com/blackbearreloaded/ProsperoRadio)
-y conserva su licencia GPL-3.0-or-later. La integración gráfica usa
+y conserva su licencia GPL-3.0-or-later. El texto íntegro está en inglés en
+[`LICENSE`](LICENSE); [`LICENSE-ES.md`](LICENSE-ES.md) ofrece un resumen informativo
+en castellano. La integración gráfica usa
 [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan), Mesa, RmlUi y SDL. Consulta
 `LICENSE` y los avisos de terceros incluidos en el repositorio para las condiciones
 de redistribución de cada componente.
