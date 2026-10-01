@@ -8,7 +8,7 @@ Radio por internet para PS5 con una interfaz inspirada en un receptor clásico.
 
 ![versión overlay](https://img.shields.io/badge/overlay-01.000.046-orange)
 ![plataforma](https://img.shields.io/badge/plataforma-PS5-00adef)
-![estado](https://img.shields.io/badge/estado-validacion%Correcta-green)
+![estado](https://img.shields.io/badge/estado-validacion-Correcta-green)
 ![licencia](https://img.shields.io/badge/licencia-GPL--3.0--or--later-orange)
 
 [Manual](docs/MANUAL-USUARIO.md) · [Flujos por módulos](docs/FLUJOS-OPERACION.md) · [Cambios](CHANGELOG.md) · [Pendientes](docs/PENDIENTES.md) · [Créditos](docs/CREDITOS.md) · [Fuentes técnicas](docs/FUENTES-TECNICAS.md) · [Contribuir](CONTRIBUTING.md) · [Licencia (ES)](LICENSE-ES.md) · [Integración Vulkan](VULKAN-INTEGRATION.md) · [Problemas](https://github.com/RastaFairy/Prospero_Radio_Vulkan/issues)
