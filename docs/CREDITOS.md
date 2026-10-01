@@ -4,7 +4,8 @@ Prospero Radio se apoya en proyectos abiertos de la escena de PS5 y en
 componentes de software libre. Esta página distingue el origen del proyecto,
 las dependencias del build y los proyectos consultados como referencia. Un
 agradecimiento o enlace no implica que el código de ese proyecto esté incluido
-en Prospero Radio.
+en Prospero Radio. Para consultar las fuentes agrupadas por su función en el
+proyecto y en futuras correcciones, véase el [índice técnico](FUENTES-TECNICAS.md).
 
 ## Proyecto y base de trabajo
 

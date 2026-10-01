@@ -13,7 +13,8 @@
  * 1. The default stderr of a title is discarded, so every renderer diagnostic
  *    written with fprintf(stderr, ...) was lost. The static initializer below
  *    redirects stderr into /download0/prospero-radio.log (the writable data
- *    mount the radio service already uses, exposed by the etaHEN FTP).
+ *    mount the radio service already uses and can be retrieved over the
+ *    console's available file-transfer service).
  *
  * 2. The libc heap cannot grow past a few MB in this launch configuration.
  *    Measured on hardware (klog 2026-09-25): a calloc(1, 1221859) issued by
@@ -69,11 +70,15 @@ extern "C"
 namespace
 {
 
+constexpr long kRuntimeLogLimitBytes = 2L * 1024L * 1024L;
+constexpr unsigned int kRuntimeLogCheckFrames = 30;
+constexpr const char *kRuntimeLogPath = "/download0/prospero-radio.log";
+
 /* The console discards the default stderr of a title. /download0 is writable
  * by this title and fetchable over FTP, so point stderr there before anything
- * else runs. Rotated once it grows past 2 MB. */
+ * else runs. The active file is bounded during startup and runtime. */
 const bool g_runtime_log_ready = []() {
-    std::FILE *log = std::freopen("/download0/prospero-radio.log", "a", stderr);
+    std::FILE *log = std::freopen(kRuntimeLogPath, "a", stderr);
     if (log == nullptr)
         return false;
     /* freopen on a regular file switches the stream to fully buffered; the
@@ -84,9 +89,9 @@ const bool g_runtime_log_ready = []() {
     /* ftell right after an append-open is unreliable on the console libc;
      * seek to the end explicitly before deciding to rotate. */
     std::fseek(log, 0, SEEK_END);
-    if (std::ftell(log) > 2u * 1024u * 1024u)
+    if (std::ftell(log) > kRuntimeLogLimitBytes)
     {
-        log = std::freopen("/download0/prospero-radio.log", "w", stderr);
+        log = std::freopen(kRuntimeLogPath, "w", stderr);
         if (log != nullptr)
             std::setvbuf(log, nullptr, _IONBF, 0);
     }
@@ -331,6 +336,33 @@ void pool_release(PoolHeader *header)
 }
 
 } // namespace
+
+/* Called from the UI loop. Keep stderr useful for diagnosing the live session,
+ * but prevent repeated runtime messages from filling the title data mount.
+ * stderr is unbuffered, so ftell observes the current file position. */
+extern "C" void ProsperoRuntimeLogMaintenance() noexcept
+{
+    if (!g_runtime_log_ready)
+        return;
+
+    static unsigned int frames_until_check = kRuntimeLogCheckFrames;
+    if (--frames_until_check != 0)
+        return;
+    frames_until_check = kRuntimeLogCheckFrames;
+
+    if (std::fflush(stderr) != 0)
+        return;
+    const long current_size = std::ftell(stderr);
+    if (current_size < 0 || current_size <= kRuntimeLogLimitBytes)
+        return;
+
+    std::FILE *log = std::freopen(kRuntimeLogPath, "w", stderr);
+    if (log == nullptr)
+        return;
+    std::setvbuf(log, nullptr, _IONBF, 0);
+    std::fprintf(stderr,
+                 "[PS5-RT] runtime log rotated after exceeding 2 MiB; earlier entries were discarded\n");
+}
 
 extern "C" __attribute__((noinline, visibility("hidden"))) bool
 ps5ObserveOwnedAllocation(const void *address) noexcept

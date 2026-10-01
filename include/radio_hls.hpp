@@ -34,8 +34,12 @@ struct radio_hls_variant_t {
 
 struct radio_hls_segment_t {
     char url[RADIO_HLS_URL_BYTES];
+    char key_url[RADIO_HLS_URL_BYTES];
     uint64_t sequence;
     uint32_t discontinuity;
+    uint32_t encrypted;
+    uint32_t iv_present;
+    uint8_t iv[16];
 };
 
 struct radio_hls_playlist_t {

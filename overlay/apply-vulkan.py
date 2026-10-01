@@ -12,7 +12,7 @@ from console_ux_patch import patch_console_ux
 
 UPSTREAM_SHA = "33898dd35375c1ae8370da137cfb6941d91c7684"
 UPSTREAM_SHA_CURRENT = "c0643ed66212a57819e04577d14528ba8238f197"  # v01.000.023 (allow this too)
-VERSION = "01.000.042"
+VERSION = "01.000.046"
 
 # Fork of the boilerplate allocation runtime (overlay/src/app_cpp_runtime.cpp).
 # 01.000.016 redirected title stderr into /download0/prospero-radio.log and gave
@@ -198,6 +198,7 @@ def replace_runapp_body(text: str) -> str:
         context->Render();
         if (!render_interface.EndFrame())
             running = false;
+        ProsperoRuntimeLogMaintenance();
         sceKernelUsleep(16667);
     }
 
@@ -526,7 +527,7 @@ def patch_native_weak_imports(worktree: Path) -> None:
 
 
 def patch_v027_radio_features(worktree: Path) -> None:
-    """Touchpad zones, lightbar, 5-band EQ on the PCM path and the AUX HTTP
+    """Touchpad zones, lightbar, 12-band EQ on the PCM path and the AUX HTTP
     ingest server. Everything follows the established extern "C" pattern: no
     SDK headers, runtime symbol resolution, inert-safe failure modes."""
     # ---- input: touchpad state + lightbar setter --------------------------
@@ -551,14 +552,13 @@ def patch_v027_radio_features(worktree: Path) -> None:
         " * Both are best-effort: invalid report layouts leave them inert. */\n"
         "bool radio_input_touch(unsigned short *x, unsigned short *y);\n"
         "void radio_input_lightbar(int r, int g, int b);\n"
-        "int radio_input_jack_state(void);\n"
         "unsigned long long radio_input_milliseconds(void);",
     )
     input_cpp = worktree / "src" / "radio_input.cpp"
     replace_once(
         input_cpp,
         '#include "radio_input.hpp"',
-        '#include "radio_input.hpp"\n#include <dlfcn.h>\n#include <stdio.h>',
+        '#include "radio_input.hpp"\n#include <stdio.h>',
     )
     replace_once(
         input_cpp,
@@ -651,47 +651,6 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "        fprintf(stderr, \"[ProsperoRadio][lightbar] scePadSetLightBar failed result=%d\\n\", result);\n"
         "}\n"
         "\n"
-        "int radio_input_jack_state(void)\n"
-        "{\n"
-        "    using jack_state_fn = int (*)(int32_t, int32_t *);\n"
-        "    static jack_state_fn query = nullptr;\n"
-        "    static bool lookup_done = false;\n"
-        "    static int cached_state = -1;\n"
-        "    static uint64_t next_probe = 0;\n"
-        "    const uint64_t now = SDL_GetTicks64();\n"
-        "    if (now < next_probe)\n"
-        "        return cached_state;\n"
-        "    next_probe = now + UINT64_C(250);\n"
-        "    if (!lookup_done)\n"
-        "    {\n"
-        "        lookup_done = true;\n"
-        "        void *symbol = dlsym(RTLD_DEFAULT, \"scePadGetJackState\");\n"
-        "        if (symbol == nullptr)\n"
-        "        {\n"
-        "            void *pad_module = dlopen(\"libScePad.sprx\", RTLD_NOW | RTLD_NOLOAD);\n"
-        "            if (pad_module != nullptr)\n"
-        "            {\n"
-        "                symbol = dlsym(pad_module, \"scePadGetJackState\");\n"
-        "                dlclose(pad_module);\n"
-        "            }\n"
-        "        }\n"
-        "        query = reinterpret_cast<jack_state_fn>(symbol);\n"
-        "        fprintf(stderr, \"[input] scePadGetJackState %s\\n\", query ? \"resolved\" : \"not exported\");\n"
-        "    }\n"
-        "    if (query == nullptr)\n"
-        "        return cached_state;\n"
-        "    int raw_state = 0;\n"
-        "    const int result = query(pad_handle, &raw_state);\n"
-        "    if (result < 0)\n"
-        "        return cached_state;\n"
-        "    const int connected = raw_state != 0 ? 1 : 0;\n"
-        "    if (connected != cached_state)\n"
-        "        fprintf(stderr, \"[input] controller jack=%s raw=%d result=%d\\n\",\n"
-        "                connected ? \"connected\" : \"open\", raw_state, result);\n"
-        "    cached_state = connected;\n"
-        "    return cached_state;\n"
-        "}\n"
-        "\n"
         "void radio_input_shutdown(void)\n{\n    radio_input_lightbar(0, 0, 0);",
     )
     reset_marker = (
@@ -711,14 +670,16 @@ def patch_v027_radio_features(worktree: Path) -> None:
         encoding="utf-8",
     )
 
-    # ---- service: 5-band biquad EQ on the PCM path ------------------------
+    # ---- service: 12-band biquad EQ and independent L/R trims -------------
     service_hpp = worktree / "include" / "radio_service.hpp"
     replace_once(
         service_hpp,
         "bool radio_service_toggle_favorite(unsigned station_index);",
-        "/* v027 graphic equalizer: five bands, gains in dB (-12..+12). */\n"
+        "/* Graphic equalizer: twelve bands and independent stereo trims. */\n"
         "void radio_service_eq_set_gain(int band, int gain_db);\n"
         "int radio_service_eq_gain(int band);\n"
+        "void radio_service_eq_set_channel_gain(int channel, int gain_db);\n"
+        "int radio_service_eq_channel_gain(int channel);\n"
         "void radio_service_eq_preset(int preset); /* 0 flat, 1 rock, 2 pop, 3 jazz */\n"
         "int radio_service_eq_preset(void); /* -1 when the current band gains are custom */\n"
         "/* AUX ingest server state for the AUX/BARRIDO surfaces. */\n"
@@ -733,24 +694,30 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "#define AUDIO_OUT_VOLUME_0DB 0x8000",
         "#define AUDIO_OUT_VOLUME_0DB 0x8000\n"
         "\n"
-        "/* --- v027: 5-band graphic equalizer (RBJ biquads, in-place 16-bit) ---- */\n"
-        "#define EQ_BANDS 5\n"
+        "/* --- 12-band graphic equalizer (RBJ biquads, in-place 16-bit) ------ */\n"
+        "#define EQ_BANDS 12\n"
         "typedef struct { float b0, b1, b2, a1, a2, z1, z2; } eq_band_state_t;\n"
         "static eq_band_state_t g_eq_l[EQ_BANDS];\n"
         "static eq_band_state_t g_eq_r[EQ_BANDS];\n"
-        "static int g_eq_gain_db[EQ_BANDS];\n"
-        "static int g_eq_preset = 0;\n"
-        "static bool g_eq_dirty = true;\n"
-        "static const float g_eq_freq[EQ_BANDS] = {60.0f, 250.0f, 1000.0f, 4000.0f, 12000.0f};\n"
+        "static std::atomic<int> g_eq_gain_db[EQ_BANDS] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};\n"
+        "static std::atomic<int> g_eq_channel_gain_db[2] = {0, 0};\n"
+        "static float g_eq_limiter_gain[2] = {1.0f, 1.0f};\n"
+        "static std::atomic<int> g_eq_preset{0};\n"
+        "static std::atomic<bool> g_eq_dirty{true};\n"
+        "static const float g_eq_freq[EQ_BANDS] = {60.0f, 125.0f, 250.0f, 500.0f, 1000.0f, 1500.0f,\n"
+        "    2000.0f, 3000.0f, 4000.0f, 6000.0f, 8000.0f, 12000.0f};\n"
         "static const int g_eq_presets[4][EQ_BANDS] = {\n"
-        "    {0, 0, 0, 0, 0}, {5, 3, -1, 3, 4}, {2, 1, 2, 0, 1}, {3, -1, 2, 2, 3},\n"
+        "    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},\n"
+        "    {5, 4, 3, 1, -1, 0, 1, 3, 3, 4, 4, 4},\n"
+        "    {2, 2, 1, 2, 2, 2, 2, 1, 0, 1, 1, 1},\n"
+        "    {3, 1, -1, 1, 2, 2, 2, 2, 2, 2, 3, 3},\n"
         "};\n"
         "void radio_service_eq_process(int16_t *frames, unsigned count);\n"
         "\n"
         "static void eq_design_band(int band, eq_band_state_t *out)\n"
         "{\n"
         "    const float pi = 3.14159265f;\n"
-        "    const float a = powf(10.0f, g_eq_gain_db[band] / 40.0f);\n"
+        "    const float a = powf(10.0f, g_eq_gain_db[band].load(std::memory_order_relaxed) / 40.0f);\n"
         "    const float w0 = 2.0f * pi * g_eq_freq[band] / 48000.0f;\n"
         "    const float cw = cosf(w0), sw = sinf(w0);\n"
         "    const float alpha = sw / (2.0f * 0.7071f);\n"
@@ -782,7 +749,6 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "    }\n"
         "    out->b0 = b0 / a0; out->b1 = b1 / a0; out->b2 = b2 / a0;\n"
         "    out->a1 = a1 / a0; out->a2 = a2 / a0;\n"
-        "    out->z1 = out->z2 = 0;\n"
         "}\n"
         "\n"
         "void radio_service_eq_set_gain(int band, int gain_db)\n"
@@ -790,19 +756,19 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "    if (band < 0 || band >= EQ_BANDS)\n"
         "        return;\n"
         "    gain_db = gain_db < -12 ? -12 : gain_db > 12 ? 12 : gain_db;\n"
-        "    if (g_eq_gain_db[band] != gain_db)\n"
+        "    if (g_eq_gain_db[band].load(std::memory_order_relaxed) != gain_db)\n"
         "    {\n"
-        "        g_eq_gain_db[band] = gain_db;\n"
-        "        g_eq_dirty = true;\n"
-        "        g_eq_preset = -1;\n"
+        "        g_eq_gain_db[band].store(gain_db, std::memory_order_relaxed);\n"
+        "        g_eq_dirty.store(true, std::memory_order_release);\n"
+        "        g_eq_preset.store(-1, std::memory_order_relaxed);\n"
         "        for (int preset = 0; preset < 4; ++preset)\n"
         "        {\n"
         "            bool matches = true;\n"
         "            for (int index = 0; index < EQ_BANDS; ++index)\n"
-        "                matches = matches && g_eq_gain_db[index] == g_eq_presets[preset][index];\n"
+        "                matches = matches && g_eq_gain_db[index].load(std::memory_order_relaxed) == g_eq_presets[preset][index];\n"
         "            if (matches)\n"
         "            {\n"
-        "                g_eq_preset = preset;\n"
+        "                g_eq_preset.store(preset, std::memory_order_relaxed);\n"
         "                break;\n"
         "            }\n"
         "        }\n"
@@ -811,7 +777,20 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "\n"
         "int radio_service_eq_gain(int band)\n"
         "{\n"
-        "    return band >= 0 && band < EQ_BANDS ? g_eq_gain_db[band] : 0;\n"
+        "    return band >= 0 && band < EQ_BANDS ? g_eq_gain_db[band].load(std::memory_order_relaxed) : 0;\n"
+        "}\n"
+        "\n"
+        "void radio_service_eq_set_channel_gain(int channel, int gain_db)\n"
+        "{\n"
+        "    if (channel < 0 || channel > 1)\n"
+        "        return;\n"
+        "    gain_db = gain_db < -12 ? -12 : gain_db > 12 ? 12 : gain_db;\n"
+        "    g_eq_channel_gain_db[channel].store(gain_db, std::memory_order_relaxed);\n"
+        "}\n"
+        "\n"
+        "int radio_service_eq_channel_gain(int channel)\n"
+        "{\n"
+        "    return channel >= 0 && channel < 2 ? g_eq_channel_gain_db[channel].load(std::memory_order_relaxed) : 0;\n"
         "}\n"
         "\n"
         "void radio_service_eq_preset(int preset)\n"
@@ -819,23 +798,26 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "    if (preset < 0 || preset > 3)\n"
         "        return;\n"
         "    for (int i = 0; i < EQ_BANDS; ++i)\n"
-        "        g_eq_gain_db[i] = g_eq_presets[preset][i];\n"
-        "    g_eq_preset = preset;\n"
-        "    g_eq_dirty = true;\n"
+        "        g_eq_gain_db[i].store(g_eq_presets[preset][i], std::memory_order_relaxed);\n"
+        "    g_eq_preset.store(preset, std::memory_order_relaxed);\n"
+        "    g_eq_dirty.store(true, std::memory_order_release);\n"
         "}\n"
         "\n"
-        "int radio_service_eq_preset(void)\n{\n    return g_eq_preset;\n}\n"
+        "int radio_service_eq_preset(void)\n{\n    return g_eq_preset.load(std::memory_order_relaxed);\n}\n"
         "\n"
         "void radio_service_eq_process(int16_t *frames, unsigned count)\n"
         "{\n"
-        "    if (g_eq_dirty)\n"
+        "    const float channel_gain_l = powf(10.0f, g_eq_channel_gain_db[0].load(std::memory_order_relaxed) / 20.0f);\n"
+        "    const float channel_gain_r = powf(10.0f, g_eq_channel_gain_db[1].load(std::memory_order_relaxed) / 20.0f);\n"
+        "    if (g_eq_dirty.exchange(false, std::memory_order_acq_rel))\n"
         "    {\n"
         "        for (int i = 0; i < EQ_BANDS; ++i)\n"
         "        {\n"
+        "            const float right_z1 = g_eq_r[i].z1, right_z2 = g_eq_r[i].z2;\n"
         "            eq_design_band(i, &g_eq_l[i]);\n"
         "            g_eq_r[i] = g_eq_l[i];\n"
+        "            g_eq_r[i].z1 = right_z1; g_eq_r[i].z2 = right_z2;\n"
         "        }\n"
-        "        g_eq_dirty = false;\n"
         "    }\n"
         "    for (unsigned f = 0; f < count; ++f)\n"
         "    {\n"
@@ -854,125 +836,27 @@ def patch_v027_radio_features(worktree: Path) -> None:
         "            s->z2 = s->b2 * r - s->a2 * yr;\n"
         "            r = yr;\n"
         "        }\n"
+        "        l *= channel_gain_l;\n"
+        "        r *= channel_gain_r;\n"
+        "        const float peak_l = fabsf(l), peak_r = fabsf(r);\n"
+        "        const float target_l = peak_l > 30000.0f ? 30000.0f / peak_l : 1.0f;\n"
+        "        const float target_r = peak_r > 30000.0f ? 30000.0f / peak_r : 1.0f;\n"
+        "        if (target_l < g_eq_limiter_gain[0]) g_eq_limiter_gain[0] = target_l;\n"
+        "        else g_eq_limiter_gain[0] += (1.0f - g_eq_limiter_gain[0]) * 0.0005f;\n"
+        "        if (target_r < g_eq_limiter_gain[1]) g_eq_limiter_gain[1] = target_r;\n"
+        "        else g_eq_limiter_gain[1] += (1.0f - g_eq_limiter_gain[1]) * 0.0005f;\n"
+        "        l *= g_eq_limiter_gain[0];\n"
+        "        r *= g_eq_limiter_gain[1];\n"
         "        frames[f * 2] = (int16_t)(l < -32768.0f ? -32768 : l > 32767.0f ? 32767 : l);\n"
         "        frames[f * 2 + 1] = (int16_t)(r < -32768.0f ? -32768 : r > 32767.0f ? 32767 : r);\n"
         "    }\n"
         "}\n"
         "\n"
-        "/* --- v027: AUX ingest server (best-effort POSIX sockets) -------------- */\n"
-        "extern \"C\"\n"
-        "{\n"
-        "    extern int socket(int, int, int);\n"
-        "    extern int bind(int, const void *, unsigned int);\n"
-        "    extern int listen(int, int);\n"
-        "    extern int accept(int, void *, unsigned int *);\n"
-        "    extern long recv(int, void *, unsigned long, int);\n"
-        "    extern long send(int, const void *, unsigned long, int);\n"
-        "    extern int close(int);\n"
-        "    extern int sceNetInit(unsigned long, int, unsigned long, int, unsigned long);\n"
-        "}\n"
-        "struct aux_sockaddr_in_t\n"
-        "{\n"
-        "    unsigned char len;\n"
-        "    unsigned char family;\n"
-        "    unsigned short port_be;\n"
-        "    unsigned int addr;\n"
-        "    char zero[8];\n"
-        "};\n"
-        "static SDL_Thread *g_aux_thread = nullptr;\n"
-        "static bool g_aux_running = false;\n"
+        "/* --- v027: AUX ingest server delegated to the payload bridge -------- */\n"
         "static int g_aux_stations = -1;\n"
-        "static const char AUX_PAGE[] =\n"
-        "    \"HTTP/1.1 200 OK\\r\\nContent-Type: text/html; charset=utf-8\\r\\n\\r\\n\"\n"
-        "    \"<!doctype html><title>Prospero AUX</title><meta name=viewport content='width=device-width,initial-scale=1'>\"\n"
-        "    \"<body style='background:#1a120b;color:#f4be76;font-family:sans-serif;text-align:center;padding-top:3em'>\"\n"
-        "    \"<h1>ProsperoRadio AUX</h1><textarea id=m rows=14 style='width:90%' placeholder='Pega aqui tu lista M3U'></textarea>\"\n"
-        "    \"<br><button style='font-size:1.4em;padding:.5em 2em;margin:1em' onclick=\\\"fetch('/list',{method:'POST',body:document.getElementById('m').value}).then(()=>alert('Lista enviada'))\\\">ENVIAR A LA PS5</button>\";\n"
-        "static void aux_count_m3u(void)\n"
-        "{\n"
-        "    FILE *f = fopen(\"/download0/radio-aux.m3u\", \"rb\");\n"
-        "    if (!f)\n"
-        "    {\n"
-        "        g_aux_stations = -1;\n"
-        "        return;\n"
-        "    }\n"
-        "    char line[512];\n"
-        "    int n = 0;\n"
-        "    while (fgets(line, sizeof(line), f))\n"
-        "        if (strncmp(line, \"#EXTINF\", 7) == 0)\n"
-        "            ++n;\n"
-        "    fclose(f);\n"
-        "    g_aux_stations = n;\n"
-        "}\n"
-        "\n"
-        "static int aux_server_thread(void *arg)\n"
-        "{\n"
-        "    (void)arg;\n"
-        "    const int listener = socket(2 /*AF_INET*/, 1 /*SOCK_STREAM*/, 0);\n"
-        "    if (listener < 0)\n"
-        "        return -1;\n"
-        "    aux_sockaddr_in_t addr{};\n"
-        "    addr.len = sizeof(addr);\n"
-        "    addr.family = 2;\n"
-        "    addr.port_be = (unsigned short)((7000 >> 8) | (7000 << 8));\n"
-        "    if (bind(listener, &addr, sizeof(addr)) < 0 || listen(listener, 4) < 0)\n"
-        "    {\n"
-        "        close(listener);\n"
-        "        return -1;\n"
-        "    }\n"
-        "    for (;;)\n"
-        "    {\n"
-        "        const int conn = accept(listener, nullptr, nullptr);\n"
-        "        if (conn < 0)\n"
-        "            continue;\n"
-        "        char request[4096];\n"
-        "        long got = recv(conn, request, sizeof(request) - 1, 0);\n"
-        "        if (got <= 0)\n"
-        "        {\n"
-        "            close(conn);\n"
-        "            continue;\n"
-        "        }\n"
-        "        request[got] = 0;\n"
-        "        if (strncmp(request, \"POST /list\", 10) == 0)\n"
-        "        {\n"
-        "            const char *body = strstr(request, \"\\r\\n\\r\\n\");\n"
-        "            if (body)\n"
-        "            {\n"
-        "                body += 4;\n"
-        "                FILE *f = fopen(\"/download0/radio-aux.m3u\", \"wb\");\n"
-        "                if (f)\n"
-        "                {\n"
-        "                    fwrite(body, 1, strlen(body), f);\n"
-        "                    fclose(f);\n"
-        "                    aux_count_m3u();\n"
-        "                }\n"
-        "            }\n"
-        "            send(conn, AUX_OK, sizeof(AUX_OK) - 1, 0);\n"
-        "        }\n"
-        "        else\n"
-        "        {\n"
-        "            send(conn, AUX_PAGE, sizeof(AUX_PAGE) - 1, 0);\n"
-        "        }\n"
-        "        close(conn);\n"
-        "    }\n"
-        "    return 0;\n"
-        "}\n"
-        "\n"
-        "void radio_service_aux_start(void)\n"
-        "{\n"
-        "    if (g_aux_running)\n"
-        "        return;\n"
-        "    aux_count_m3u();\n"
-        "    if (sceNetInit(0x40000, 0, 0, 0, 0) < 0)\n"
-        "        return; /* net stack unavailable: the surface shows the hint */\n"
-        "    g_aux_thread = SDL_CreateThread(aux_server_thread, \"aux\", nullptr);\n"
-        "    g_aux_running = g_aux_thread != nullptr;\n"
-        "}\n"
-        "\n"
-        "bool radio_service_aux_running(void)\n{\n    return g_aux_running;\n}\n"
-        "\n"
-        "int radio_service_aux_stations(void)\n{\n    return g_aux_stations;\n}\n"
-        "\n"
+        "void radio_service_aux_start(void) {}\n"
+        "bool radio_service_aux_running(void) { return false; }\n"
+        "int radio_service_aux_stations(void) { return g_aux_stations; }\n"
         "void radio_service_eq_process(int16_t *frames, unsigned count);",
     )
     replace_once(
@@ -984,15 +868,22 @@ def patch_v027_radio_features(worktree: Path) -> None:
     replace_once(
         service_cpp,
         "#include \"pcm_queue.hpp\"",
-        "#include \"pcm_queue.hpp\"\n#include <errno.h>\n#include <math.h>\n#include <string.h>\n#include <stdio.h>\n#include <stdlib.h>",
+        "#include \"pcm_queue.hpp\"\n#include <atomic>\n#include <errno.h>\n#include <math.h>\n#include <string.h>\n#include <stdio.h>\n#include <stdlib.h>",
     )
 
 
 def patch_aux_server(worktree: Path) -> None:
     """Delegate AUX lifecycle and file transfer to the named payload RPC API."""
     service_cpp = worktree / "src" / "radio_service.cpp"
+    service_hpp = worktree / "include" / "radio_service.hpp"
+    replace_once(
+        service_hpp,
+        "int radio_service_aux_stations(void);",
+        "int radio_service_aux_stations(void);\n"
+        "void radio_service_aux_stations_set(int count);",
+    )
     text = service_cpp.read_text(encoding="utf-8")
-    start_marker = "/* --- v027: AUX ingest server (best-effort POSIX sockets) -------------- */"
+    start_marker = "/* --- v027: AUX ingest server delegated to the payload bridge -------- */"
     end_marker = "void radio_service_eq_process(int16_t *frames, unsigned count);"
     if text.count(start_marker) != 1:
         raise RuntimeError("Expected exactly one generated AUX server block")
@@ -1003,32 +894,9 @@ def patch_aux_server(worktree: Path) -> None:
     end += len(end_marker)
     replacement = r"""static int g_aux_stations = -1;
 
-static void aux_count_m3u(void)
-{
-    FILE *file = fopen("/download0/radio-aux.m3u", "rb");
-    if (file == nullptr)
-    {
-        g_aux_stations = -1;
-        return;
-    }
-    char line[1024];
-    int count = 0;
-    while (fgets(line, sizeof(line), file) != nullptr)
-    {
-        const char *value = line;
-        while (*value == ' ' || *value == '\t')
-            ++value;
-        if (strncmp(value, "http://", 7) == 0 || strncmp(value, "https://", 8) == 0)
-            ++count;
-    }
-    fclose(file);
-    g_aux_stations = count;
-}
-
 void radio_service_aux_start(void)
 {
     const bool ready = radio_payload_bridge_aux_start();
-    aux_count_m3u();
     fprintf(stderr, "[AUX] payload server start %s port=7000\n", ready ? "PASS" : "FAIL");
 }
 
@@ -1039,8 +907,16 @@ bool radio_service_aux_running(void)
 
 int radio_service_aux_stations(void)
 {
-    aux_count_m3u();
     return g_aux_stations;
+}
+
+void radio_service_aux_stations_set(int count)
+{
+    if (count < 0)
+        count = -1;
+    else if (count > 4096)
+        count = 4096;
+    g_aux_stations = count;
 }
 
 void radio_service_eq_process(int16_t *frames, unsigned count);"""
@@ -1642,237 +1518,231 @@ void radio_service_stop(void)""",
     )
 
 
-def patch_radio_app(worktree: Path) -> None:
-    app_header = worktree / "include" / "radio_app.hpp"
+def patch_stream_codec_detection(worktree: Path) -> None:
+    """Choose a direct-stream decoder from HTTP metadata or bounded sniffing.
+
+    M3U URLs often omit file extensions (for example RNE's /mp3/high paths),
+    and treating every unknown URL as AAC silently sends MP3 streams to the
+    wrong decoder. Keep the initial probe bounded and replay its bytes.
+    """
+    service_cpp = worktree / "src" / "radio_service.cpp"
     replace_once(
-        app_header,
-        "    bool search_open_ = false;\n",
-        "    bool search_open_ = false;\n"
-        "    bool settings_open_ = false;\n"
-        "    unsigned settings_focus_ = 0;\n",
+        service_cpp,
+        '            accept = "application/vnd.apple.mpegurl, application/x-mpegURL, "\n'
+        '                     "video/mp2t, audio/aac, audio/aacp, */*";\n',
+        '            accept = "application/vnd.apple.mpegurl, application/x-mpegURL, "\n'
+        '                     "video/mp2t, audio/mpeg, audio/mp3, audio/aac, audio/aacp, */*";\n',
     )
     replace_once(
-        app_header,
-        "    void OpenCredits();\n    void CloseCredits();\n",
-        "    void OpenCredits();\n    void CloseCredits();\n"
-        "    void OpenSettings();\n    void CloseSettings();\n"
-        "    void RefreshSettings(bool refresh_favorites = true);\n"
-        "    void HandleSettingsKey(radio_input_key_t key);\n"
-        "    void AdjustVolume(int direction);\n"
-        "    void StepStation(int direction);\n",
+        service_cpp,
+        "static size_t http_icy_metadata_interval(int request)\n"
+        "{\n"
+        "    char *headers = nullptr;\n"
+        "    size_t size = 0U;\n"
+        "    if (sceHttpGetAllResponseHeaders(request, &headers, &size) < 0 || headers == nullptr)\n"
+        "        return 0U;\n"
+        "    return icy_metadata_interval_from_headers(headers, size);\n"
+        "}\n",
+        "static size_t http_icy_metadata_interval(int request)\n"
+        "{\n"
+        "    char *headers = nullptr;\n"
+        "    size_t size = 0U;\n"
+        "    if (sceHttpGetAllResponseHeaders(request, &headers, &size) < 0 || headers == nullptr)\n"
+        "        return 0U;\n"
+        "    return icy_metadata_interval_from_headers(headers, size);\n"
+        "}\n"
+        "\n"
+        "static const char *http_audio_codec(int request)\n"
+        "{\n"
+        "    char *headers = nullptr;\n"
+        "    size_t size = 0U;\n"
+        "    if (sceHttpGetAllResponseHeaders(request, &headers, &size) < 0 || headers == nullptr)\n"
+        "        return nullptr;\n"
+        "    static const char key[] = \"content-type:\";\n"
+        "    constexpr size_t key_size = sizeof(key) - 1U;\n"
+        "    for (size_t i = 0U; i + key_size <= size; ++i)\n"
+        "    {\n"
+        "        if (strncasecmp(headers + i, key, key_size) != 0)\n"
+        "            continue;\n"
+        "        size_t begin = i + key_size;\n"
+        "        while (begin < size && (headers[begin] == ' ' || headers[begin] == '\\t'))\n"
+        "            ++begin;\n"
+        "        size_t end = begin;\n"
+        "        while (end < size && headers[end] != ';' && headers[end] != '\\r' &&\n"
+        "               headers[end] != '\\n' && headers[end] != ' ' && headers[end] != '\\t')\n"
+        "            ++end;\n"
+        "        const size_t length = end - begin;\n"
+        "        const char *type = headers + begin;\n"
+        "        if ((length == 10U && strncasecmp(type, \"audio/mpeg\", length) == 0) ||\n"
+        "            (length == 9U && strncasecmp(type, \"audio/mp3\", length) == 0) ||\n"
+        "            (length == 12U && strncasecmp(type, \"audio/x-mpeg\", length) == 0))\n"
+        "            return \"MP3\";\n"
+        "        if ((length == 9U && strncasecmp(type, \"audio/aac\", length) == 0) ||\n"
+        "            (length == 10U && strncasecmp(type, \"audio/aacp\", length) == 0) ||\n"
+        "            (length == 11U && strncasecmp(type, \"audio/x-aac\", length) == 0))\n"
+        "            return \"AAC\";\n"
+        "        if ((length == 9U && strncasecmp(type, \"audio/ogg\", length) == 0) ||\n"
+        "            (length == 15U && strncasecmp(type, \"application/ogg\", length) == 0))\n"
+        "            return \"OGG\";\n"
+        "        if ((length == 10U && strncasecmp(type, \"audio/flac\", length) == 0) ||\n"
+        "            (length == 12U && strncasecmp(type, \"audio/x-flac\", length) == 0))\n"
+        "            return \"FLAC\";\n"
+        "        return nullptr;\n"
+        "    }\n"
+        "    return nullptr;\n"
+        "}\n",
     )
 
-    app_cpp = worktree / "src" / "radio_app.cpp"
     replace_once(
-        app_cpp,
-        """    if (key == RADIO_INPUT_TRIANGLE)
-    {
-        OpenSearch(InvalidStation);
-        return;
-    }
-""",
-        """    if (key == RADIO_INPUT_TRIANGLE)
-    {
-        OpenSettings();
-        return;
-    }
-    if (key == RADIO_INPUT_LEFT || key == RADIO_INPUT_RIGHT)
-    {
-        SetView(key == RADIO_INPUT_LEFT ? -1 : 1);
-        return;
-    }
-        """,
+        service_cpp,
+        "static size_t find_adts(const uint8_t *data, size_t size)\n"
+        "{\n"
+        "    for (size_t i = 0; i + 1U < size; ++i)\n"
+        "    {\n"
+        "        if (data[i] == 0xffU && (data[i + 1U] & 0xf6U) == 0xf0U)\n"
+        "            return i;\n"
+        "    }\n"
+        "    return size;\n"
+        "}\n",
+        "static size_t find_adts(const uint8_t *data, size_t size)\n"
+        "{\n"
+        "    for (size_t i = 0; i + 1U < size; ++i)\n"
+        "    {\n"
+        "        if (data[i] == 0xffU && (data[i + 1U] & 0xf6U) == 0xf0U)\n"
+        "            return i;\n"
+        "    }\n"
+        "    return size;\n"
+        "}\n"
+        "\n"
+        "enum auto_stream_format_t\n"
+        "{\n"
+        "    AUTO_STREAM_MP3 = 10,\n"
+        "    AUTO_STREAM_AAC = 11,\n"
+        "    AUTO_STREAM_FLAC = 12,\n"
+        "    AUTO_STREAM_UNSUPPORTED = -16\n"
+        "};\n"
+        "\n"
+        "static int prefixed_http_open_auto(prefixed_http_reader_t *reader,\n"
+        "                                   stream_read_fn read_stream, void *read_context)\n"
+        "{\n"
+        "    memset(reader, 0, sizeof(*reader));\n"
+        "    reader->read_stream = read_stream;\n"
+        "    reader->read_context = read_context;\n"
+        "    while (reader->prefix_size < sizeof(reader->prefix) &&\n"
+        "           !SDL_AtomicGet(&g_stop_playback))\n"
+        "    {\n"
+        "        if (reader->prefix_size >= 4U &&\n"
+        "            memcmp(reader->prefix, \"fLaC\", 4U) == 0)\n"
+        "            return AUTO_STREAM_FLAC;\n"
+        "        const ogg_format_t ogg = ogg_probe(reader->prefix, reader->prefix_size);\n"
+        "        if (ogg > OGG_FORMAT_NEED_MORE)\n"
+        "            return static_cast<int>(ogg);\n"
+        "        mp3_header_t mp3_header{};\n"
+        "        if (mp3_header_find(reader->prefix, reader->prefix_size, &mp3_header) <\n"
+        "            reader->prefix_size)\n"
+        "            return AUTO_STREAM_MP3;\n"
+        "        if (find_adts(reader->prefix, reader->prefix_size) < reader->prefix_size)\n"
+        "            return AUTO_STREAM_AAC;\n"
+        "        const int received = read_stream(read_context, reader->prefix + reader->prefix_size,\n"
+        "                                         sizeof(reader->prefix) - reader->prefix_size);\n"
+        "        if (received < 0)\n"
+        "            return received;\n"
+        "        if (received == 0)\n"
+        "            return -3;\n"
+        "        reader->prefix_size += static_cast<size_t>(received);\n"
+        "    }\n"
+        "    return AUTO_STREAM_UNSUPPORTED;\n"
+        "}\n",
     )
+
     replace_once(
-        app_cpp,
-        """    if (key == RADIO_INPUT_L1)
-    {
-        SetView(-1);
-        return;
-    }
-    if (key == RADIO_INPUT_R1)
-    {
-        SetView(1);
-        return;
-    }
-""",
-        "",
-    )
-    replace_once(
-        app_cpp,
-        "Choose Country, Genre, or Language below - Triangle opens search",
-        "Choose a filter below to find new stations",
-    )
-    replace_once(
-        app_cpp,
-        "void RadioApp::SetView(int direction)",
-        """void RadioApp::OpenSettings()
-{
-    if (settings_open_ || search_open_ || credits_open_)
-        return;
-    settings_open_ = true;
-    settings_focus_ = 0;
-    SetVisible(document_, "settings-overlay", true);
-    RefreshSettings();
-    UpdateFocus();
-}
-
-void RadioApp::CloseSettings()
-{
-    if (!settings_open_)
-        return;
-    settings_open_ = false;
-    SetVisible(document_, "settings-overlay", false);
-    UpdateFocus();
-}
-
-void RadioApp::RefreshSettings(bool refresh_favorites)
-{
-    const unsigned volume = radio_service_get_volume();
-    char text[96];
-    std::snprintf(text, sizeof(text), "VOL %u%%", volume);
-    SetText(document_, "volume-level", text);
-    if (!settings_open_)
-        return;
-
-    static const char *view_names[] = {"Popular", "Trending", "Top rated", "Favorites", "Discover"};
-    const unsigned view_index = static_cast<unsigned>(view_);
-    SetText(document_, "settings-current-list",
-            view_index < sizeof(view_names) / sizeof(view_names[0]) ? view_names[view_index]
-                                                                     : "Radio lists");
-    std::snprintf(text, sizeof(text), "%u stations in this list", visible_count_);
-    SetText(document_, "settings-station-count", text);
-    std::snprintf(text, sizeof(text), "%u%%", volume);
-    SetText(document_, "settings-volume-value", text);
-    SetPixelProperty(document_, "settings-volume-fill", "width",
-                     static_cast<int>((390U * volume) / 100U));
-    if (refresh_favorites)
-    {
-        std::snprintf(text, sizeof(text), "%u saved stations", radio_service_get_favorite_count());
-        SetText(document_, "settings-favorites-count", text);
-    }
-
-    radio_service_status_t status{};
-    radio_service_get_status(&status);
-    SetText(document_, "settings-refresh-state", status.refreshing ? "Updating..." : "Ready");
-    SetClass(document_, "settings-favorites", "focused", settings_focus_ == 0U);
-    SetClass(document_, "settings-refresh", "focused", settings_focus_ == 1U);
-}
-
-void RadioApp::HandleSettingsKey(radio_input_key_t key)
-{
-    if (key == RADIO_INPUT_TRIANGLE || key == RADIO_INPUT_CIRCLE)
-    {
-        CloseSettings();
-        return;
-    }
-    if (key == RADIO_INPUT_LEFT || key == RADIO_INPUT_RIGHT)
-    {
-        SetView(key == RADIO_INPUT_LEFT ? -1 : 1);
-        RefreshSettings();
-        return;
-    }
-    if (key == RADIO_INPUT_UP || key == RADIO_INPUT_DOWN)
-    {
-        settings_focus_ = settings_focus_ == 0U ? 1U : 0U;
-        RefreshSettings();
-        return;
-    }
-    if (key != RADIO_INPUT_CROSS)
-        return;
-    if (settings_focus_ == 0U)
-    {
-        CloseSettings();
-        view_ = View::Favorites;
-        page_start_ = selected_slot_ = focus_ = 0;
-        RefreshAll();
-        UpdateFocus();
-        return;
-    }
-    radio_service_refresh();
-    RefreshSettings();
-}
-
-void RadioApp::AdjustVolume(int direction)
-{
-    const int current = static_cast<int>(radio_service_get_volume());
-    const int next = std::clamp(current + direction * 2, 0, 100);
-    if (next != current)
-        radio_service_set_volume(static_cast<unsigned>(next));
-    RefreshSettings(false);
-}
-
-void RadioApp::StepStation(int direction)
-{
-    if (visible_count_ == 0U)
-        return;
-    unsigned current = page_start_ + selected_slot_;
-    if (current >= visible_count_)
-        current = 0U;
-    const unsigned next = direction < 0
-                              ? (current == 0U ? visible_count_ - 1U : current - 1U)
-                              : (current + 1U == visible_count_ ? 0U : current + 1U);
-    radio_service_status_t status{};
-    radio_service_get_status(&status);
-    const bool resume_playback = PlaybackActive(status.playback_state);
-    page_start_ = (next / CardCount) * CardCount;
-    selected_slot_ = next % CardCount;
-    focus_ = selected_slot_;
-    BuildVisibleList();
-    RefreshCards();
-    RefreshHeading();
-    RefreshDetail();
-    UpdateFocus();
-    if (resume_playback && card_stations_[selected_slot_] != InvalidStation)
-        TogglePlayback();
-}
-
-void RadioApp::SetView(int direction)""",
-    )
-    replace_function(
-        app_cpp,
-        "void RadioApp::HandleInput(const radio_input_event_t &event)",
-        """void RadioApp::HandleInput(const radio_input_event_t &event)
-{
-    if (!event.pressed)
-        return;
-    if (event.key == RADIO_INPUT_VOLUME_UP || event.key == RADIO_INPUT_VOLUME_DOWN)
-    {
-        AdjustVolume(event.key == RADIO_INPUT_VOLUME_UP ? 1 : -1);
-        return;
-    }
-    if (credits_open_)
-    {
-        if (event.key == RADIO_INPUT_CROSS || event.key == RADIO_INPUT_CIRCLE)
-            CloseCredits();
-        return;
-    }
-    if (settings_open_)
-    {
-        HandleSettingsKey(event.key);
-        return;
-    }
-    if (search_open_)
-    {
-        HandleSearchKey(event.key);
-        return;
-    }
-    if (event.key == RADIO_INPUT_STATION_PREVIOUS || event.key == RADIO_INPUT_STATION_NEXT)
-    {
-        StepStation(event.key == RADIO_INPUT_STATION_PREVIOUS ? -1 : 1);
-        return;
-    }
-    HandleMainKey(event.key);
-}""",
-    )
-    replace_once(
-        app_cpp,
-        "    UpdateEqualizer(status);\n    last_status_ = status;",
-        "    UpdateEqualizer(status);\n"
-        "    if (settings_open_ && (!have_last_status_ || status.refreshing != last_status_.refreshing ||\n"
-        "                          status.catalog_generation != last_status_.catalog_generation))\n"
-        "        RefreshSettings();\n"
-        "    last_status_ = status;",
+        service_cpp,
+        "    int result;\n"
+        "    if (strcasecmp(station->codec, \"OPUS\") == 0)\n"
+        "        result = play_opus_reader(direct_read, direct_context, output_frames);\n"
+        "    else if (strcasecmp(station->codec, \"VORBIS\") == 0)\n"
+        "        result = play_vorbis_reader(direct_read, direct_context, output_frames);\n"
+        "    else if (strcasecmp(station->codec, \"FLAC\") == 0)\n"
+        "    {\n"
+        "        prefixed_http_reader_t reader;\n"
+        "        const int format = prefixed_http_open(&reader, direct_read, direct_context);\n"
+        "        if (format == OGG_FORMAT_FLAC)\n"
+        "            result = play_ogg_flac_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else\n"
+        "            result = play_flac_reader(prefixed_http_read, &reader, output_frames);\n"
+        "    }\n"
+        "    else if (strcasecmp(station->codec, \"OGG\") == 0)\n"
+        "    {\n"
+        "        prefixed_http_reader_t reader;\n"
+        "        const int format = prefixed_http_open(&reader, direct_read, direct_context);\n"
+        "        if (format == OGG_FORMAT_OPUS)\n"
+        "            result = play_opus_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else if (format == OGG_FORMAT_VORBIS)\n"
+        "            result = play_vorbis_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else if (format == OGG_FORMAT_FLAC)\n"
+        "            result = play_ogg_flac_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else\n"
+        "            result = format < 0 ? format : VORBIS_DECODER_UNSUPPORTED;\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        const bool mp3 = strcasecmp(station->codec, \"MP3\") == 0;\n"
+        "        result =\n"
+        "            play_audiodec_reader(direct_read, direct_context, source_channels, mp3, output_frames);\n"
+        "    }",
+        "    const char *response_codec = http_audio_codec(request);\n"
+        "    const char *codec = response_codec != nullptr ? response_codec : station->codec;\n"
+        "    int result;\n"
+        "    if (strcasecmp(codec, \"OPUS\") == 0)\n"
+        "        result = play_opus_reader(direct_read, direct_context, output_frames);\n"
+        "    else if (strcasecmp(codec, \"VORBIS\") == 0)\n"
+        "        result = play_vorbis_reader(direct_read, direct_context, output_frames);\n"
+        "    else if (strcasecmp(codec, \"FLAC\") == 0)\n"
+        "    {\n"
+        "        prefixed_http_reader_t reader;\n"
+        "        const int format = prefixed_http_open(&reader, direct_read, direct_context);\n"
+        "        if (format == OGG_FORMAT_FLAC)\n"
+        "            result = play_ogg_flac_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else\n"
+        "            result = play_flac_reader(prefixed_http_read, &reader, output_frames);\n"
+        "    }\n"
+        "    else if (strcasecmp(codec, \"OGG\") == 0)\n"
+        "    {\n"
+        "        prefixed_http_reader_t reader;\n"
+        "        const int format = prefixed_http_open(&reader, direct_read, direct_context);\n"
+        "        if (format == OGG_FORMAT_OPUS)\n"
+        "            result = play_opus_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else if (format == OGG_FORMAT_VORBIS)\n"
+        "            result = play_vorbis_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else if (format == OGG_FORMAT_FLAC)\n"
+        "            result = play_ogg_flac_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else\n"
+        "            result = format < 0 ? format : VORBIS_DECODER_UNSUPPORTED;\n"
+        "    }\n"
+        "    else if (strcasecmp(codec, \"AUTO\") == 0 || strcasecmp(codec, \"STREAM\") == 0)\n"
+        "    {\n"
+        "        prefixed_http_reader_t reader;\n"
+        "        const int format = prefixed_http_open_auto(&reader, direct_read, direct_context);\n"
+        "        if (format == OGG_FORMAT_OPUS)\n"
+        "            result = play_opus_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else if (format == OGG_FORMAT_VORBIS)\n"
+        "            result = play_vorbis_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else if (format == OGG_FORMAT_FLAC)\n"
+        "            result = play_ogg_flac_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else if (format == AUTO_STREAM_FLAC)\n"
+        "            result = play_flac_reader(prefixed_http_read, &reader, output_frames);\n"
+        "        else if (format == AUTO_STREAM_MP3 || format == AUTO_STREAM_AAC)\n"
+        "            result = play_audiodec_reader(prefixed_http_read, &reader, source_channels,\n"
+        "                                          format == AUTO_STREAM_MP3, output_frames);\n"
+        "        else\n"
+        "            result = format < 0 ? format : AUTO_STREAM_UNSUPPORTED;\n"
+        "    }\n"
+        "    else\n"
+        "    {\n"
+        "        const bool mp3 = strcasecmp(codec, \"MP3\") == 0;\n"
+        "        result =\n"
+        "            play_audiodec_reader(direct_read, direct_context, source_channels, mp3, output_frames);\n"
+        "    }",
     )
 
 
@@ -1895,20 +1765,6 @@ def apply_ui_overlay(worktree: Path, overlay: Path) -> None:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
 
-    # Cabinet finish themes (24-bit flat fronts). Strip the TGA 2.0 footer
-    # (26 bytes ending in TRUEVISION-XFILE.) so the runtime reader, which
-    # expects the file to end exactly at the pixel data, accepts them.
-    theme_source = overlay / "assets/ui/themes"
-    theme_destination = worktree / "assets/ui/themes"
-    theme_destination.mkdir(parents=True, exist_ok=True)
-    for source_asset in sorted(theme_source.iterdir()):
-        if source_asset.suffix.lower() != ".tga":
-            continue
-        data = source_asset.read_bytes()
-        if data[-18:-1] == b"TRUEVISION-XFILE." and data[-1] == 0:
-            data = data[:-26]
-        (theme_destination / source_asset.name).write_bytes(data)
-
     # Keep modular control atlases in the materialized upstream asset tree so
     # the package step includes them even before the app binds their UV frames.
     control_source = overlay / "assets/ui/controls"
@@ -1919,6 +1775,52 @@ def apply_ui_overlay(worktree: Path, overlay: Path) -> None:
         destination_asset = control_destination / source_asset.name
         destination_asset.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_asset, destination_asset)
+
+
+def apply_stream_protocols(worktree: Path, overlay: Path) -> None:
+    """Stage the bounded HLS AES-128 and static DASH AAC implementation."""
+    modules = (
+        "include/radio_aes128.hpp",
+        "include/radio_dash.hpp",
+        "src/radio_aes128.cpp",
+        "src/radio_dash.cpp",
+    )
+    for relative in modules:
+        source = overlay / relative
+        if not source.is_file():
+            raise RuntimeError(f"Missing stream protocol source: {source}")
+        destination = worktree / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    patch = overlay / "patches" / "radio-stream-protocols.patch"
+    if not patch.is_file():
+        raise RuntimeError(f"Missing stream protocol patch: {patch}")
+    check = subprocess.run(
+        ["git", "apply", "--check", str(patch)],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+    )
+    if check.returncode != 0:
+        raise RuntimeError(
+            "Stream protocol patch no longer matches the pinned source:\n"
+            + check.stderr.strip()
+        )
+    subprocess.run(
+        ["git", "apply", str(patch)], cwd=worktree, check=True
+    )
+
+    service = (worktree / "src/radio_service.cpp").read_text(encoding="utf-8")
+    expected = (
+        '#include "radio_aes128.hpp"',
+        '#include "radio_dash.hpp"',
+        "#define STREAM_OPEN_DASH 2",
+        "static int dash_reader_open(",
+    )
+    missing = [marker for marker in expected if marker not in service]
+    if missing:
+        raise RuntimeError(f"Stream protocol integration incomplete: {', '.join(missing)}")
 
 
 def main() -> int:
@@ -1946,6 +1848,8 @@ def main() -> int:
     patch_catalog_paging(worktree)
     patch_payload_persistence(worktree)
     patch_audio_service(worktree)
+    patch_stream_codec_detection(worktree)
+    apply_stream_protocols(worktree, overlay)
     # The physical-radio frontend ships complete sources: replace the upstream
     # application layer wholesale instead of anchoring patches to it.
     shutil.copy2(overlay / "include/radio_app.hpp", worktree / "include/radio_app.hpp")
@@ -1955,7 +1859,12 @@ def main() -> int:
 
     main_cpp = worktree / "src" / "main.cpp"
     text = main_cpp.read_text(encoding="utf-8")
-    replace_once(main_cpp, '#include "radio_input.hpp"', '#include "radio_input.hpp"\n#include "ps5_vulkan_renderer.hpp"')
+    replace_once(
+        main_cpp,
+        '#include "radio_input.hpp"',
+        '#include "radio_input.hpp"\n#include "ps5_vulkan_renderer.hpp"\n'
+        '\nextern "C" void ProsperoRuntimeLogMaintenance() noexcept;'
+    )
     text = main_cpp.read_text(encoding="utf-8")
     text = replace_class(text, "SdlRenderInterface", 'class ProsperoVulkanRenderInterfaceAdapter final : public Rml::RenderInterfaceCompatibility\n{\n  public:\n    ProsperoVulkanRenderInterfaceAdapter()\n    {\n        backend_.Initialize("assets/ui/vulkan/ui.vert.spv", "assets/ui/vulkan/ui.frag.spv");\n    }\n\n    ~ProsperoVulkanRenderInterfaceAdapter() override = default;\n\n    void BeginFrame() { backend_.BeginFrame(); }\n    bool EndFrame() { return backend_.EndFrame(); }\n    bool IsInitialized() const { return backend_.IsInitialized(); }\n\n    void RenderGeometry(Rml::Vertex *vertices, int num_vertices, int *indices, int num_indices,\n                        Rml::TextureHandle texture, const Rml::Vector2f &translation) override\n    {\n        backend_.RenderGeometry(vertices, num_vertices, indices, num_indices, texture, translation);\n    }\n    bool LoadTexture(Rml::TextureHandle &handle, Rml::Vector2i &dimensions, const Rml::String &source) override\n    {\n        return backend_.LoadTexture(handle, dimensions, source);\n    }\n    bool GenerateTexture(Rml::TextureHandle &handle, const Rml::byte *source,\n                         const Rml::Vector2i &dimensions) override\n    {\n        return backend_.GenerateTexture(handle, source, dimensions);\n    }\n    void ReleaseTexture(Rml::TextureHandle texture) override { backend_.ReleaseTexture(texture); }\n    void EnableScissorRegion(bool enable) override { backend_.EnableScissorRegion(enable); }\n    void SetScissorRegion(int x, int y, int width, int height) override\n    {\n        backend_.SetScissorRegion(x, y, width, height);\n    }\n\n  private:\n    Ps5VulkanRenderInterface backend_;\n};')
     text = replace_runapp_body(text)
@@ -1985,10 +1894,14 @@ def main() -> int:
             str(worktree / "src/radio_service.cpp"),
             str(worktree / "src/radio_app.cpp"),
             str(worktree / "src/payload_probe.cpp"),
+            str(worktree / "src/radio_aes128.cpp"),
+            str(worktree / "src/radio_dash.cpp"),
             str(worktree / "include/radio_input.hpp"),
             str(worktree / "include/radio_service.hpp"),
             str(worktree / "include/radio_app.hpp"),
             str(worktree / "include/payload_probe.hpp"),
+            str(worktree / "include/radio_aes128.hpp"),
+            str(worktree / "include/radio_dash.hpp"),
         ],
         cwd=worktree,
         check=True,
@@ -2025,21 +1938,18 @@ def main() -> int:
         worktree / "tools/check_ui.py",
         '    "credits-overlay", "credits-close", "brand-mark", "brand-name", "brand-version",',
         '    "credits-overlay", "credits-close", "brand-mark", "brand-name", "brand-version",\n'
-        '    "volume-level", "settings-overlay", "settings-current-list", "settings-station-count",\n'
-        '    "settings-volume-row", "settings-volume-value", "settings-volume-fill",\n'
-        '    "settings-favorites", "settings-favorites-count", "settings-refresh", "settings-refresh-state",',
+        '    "volume-level",',
     )
     replace_once(
         worktree / "tools/check_ui.py",
         '    assert "#credit-button.focused" in css and "#play-button.focused" in css',
         '    assert "#credit-button.focused" in css and "#play-button.focused" in css\n'
-        '    assert "#settings-overlay.hidden" in css and ".settings-action.focused" in css\n'
         '    input_source = (repo / "src/radio_input.cpp").read_text(encoding="utf-8")\n'
         '    app_source = (repo / "src/radio_app.cpp").read_text(encoding="utf-8")\n'
         '    assert "left_stick_action(sample[5])" in input_source\n'
         '    assert "right_stick_action(sample[6])" in input_source\n'
-        '    assert "RADIO_INPUT_STATION_PREVIOUS" in app_source and "OpenSettings();" in app_source\n'
-        '    assert "settings_open_" in app_source and "RADIO_INPUT_VOLUME_UP" in app_source',
+        '    assert "RADIO_INPUT_STATION_PREVIOUS" in app_source\n'
+        '    assert "RADIO_INPUT_VOLUME_UP" in app_source',
     )
 
     param = worktree / "sce_sys" / "param.json"

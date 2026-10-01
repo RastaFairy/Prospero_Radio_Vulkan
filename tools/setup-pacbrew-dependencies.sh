@@ -3,21 +3,31 @@
 # Copyright (C) 2026 BlackBearReloaded
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Installs the pinned PacBrew ports prefix into the ignored repository cache
-# and resolves selected pkg-config modules without modifying the host SDK.
+# Installs the pinned PacBrew ports prefix into a local cache and resolves
+# selected pkg-config modules without modifying the host SDK.
 
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-cache="$root/.deps/pacbrew"
+archive_cache="$root/.deps/pacbrew"
+cache="$archive_cache"
 version=v0.40.2
-archive="$cache/ps5-payload-dev-$version.tar.gz"
-release="$cache/$version"
-sysroot="$release/sysroot"
-url="https://github.com/ps5-payload-dev/pacbrew-repo/releases/download/$version/ps5-payload-dev.tar.gz"
 hash=a85f65de418a8e6a898c6c3e3c870d50fff7618a200e4dd59ea9692af6ecec4d
+archive="$archive_cache/ps5-payload-dev-$version.tar.gz"
+url="https://github.com/ps5-payload-dev/pacbrew-repo/releases/download/$version/ps5-payload-dev.tar.gz"
 mode=${1:-}
 [[ -n $mode ]] && shift
+
+# WSL's Windows-drive mounts (DrvFs/9p) cannot represent the symlinks and
+# hardlinks in the PacBrew sysroot. Keep the downloaded archive in the project
+# cache, but extract the prefix into WSL's Linux filesystem when needed.
+filesystem=$(stat -f -c %T "$root" 2>/dev/null || true)
+if [[ $filesystem == 9p || $filesystem == v9fs || $filesystem == drvfs ]]; then
+    cache_base=${XDG_CACHE_HOME:-${HOME:-/tmp}/.cache}
+    cache="$cache_base/prospero-radio/pacbrew"
+fi
+release="$cache/$version-$hash"
+sysroot="$release/sysroot"
 
 case "$mode" in
     --all|--list|--environment|--resolve) ;;
@@ -58,12 +68,16 @@ for module in "${modules[@]}"; do
     }
 done
 
-mkdir -p "$cache"
+mkdir -p "$archive_cache" "$cache"
 marker="$release/.complete"
 expected_marker="$version $hash"
 actual_marker=""
 [[ ! -f $marker ]] || actual_marker=$(<"$marker")
 if [[ $actual_marker != "$expected_marker" || ! -d $sysroot/user/homebrew/lib ]]; then
+    if [[ -e $release ]]; then
+        echo "PacBrew cache exists but is incomplete or has a different version; keeping it untouched: $release" >&2
+        exit 2
+    fi
     if [[ ! -f $archive ]] || ! printf '%s  %s\n' "$hash" "$archive" | sha256sum --check --strict >/dev/null 2>&1; then
         temporary="$archive.download"
         echo "==> [pacbrew] Downloading $version prebuilt ports (about 346 MB)" >&2
@@ -84,8 +98,6 @@ if [[ $actual_marker != "$expected_marker" || ! -d $sysroot/user/homebrew/lib ]]
         exit 2
     }
     printf '%s\n' "$expected_marker" > "$temporary_root/.complete"
-    [[ $release == "$cache/$version" ]] || exit 2
-    rm -rf -- "$release"
     mv "$temporary_root" "$release"
     trap - EXIT
 fi

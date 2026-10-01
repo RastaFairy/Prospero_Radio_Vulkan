@@ -1,0 +1,631 @@
+diff --git a/include/radio_hls.hpp b/include/radio_hls.hpp
+index d2f7b43..aec88ee 100644
+--- a/include/radio_hls.hpp
++++ b/include/radio_hls.hpp
+@@ -34,8 +34,12 @@ struct radio_hls_variant_t {
+ 
+ struct radio_hls_segment_t {
+     char url[RADIO_HLS_URL_BYTES];
++    char key_url[RADIO_HLS_URL_BYTES];
+     uint64_t sequence;
+     uint32_t discontinuity;
++    uint32_t encrypted;
++    uint32_t iv_present;
++    uint8_t iv[16];
+ };
+ 
+ struct radio_hls_playlist_t {
+diff --git a/include/radio_playlist.hpp b/include/radio_playlist.hpp
+index 1f065cd..891083f 100644
+--- a/include/radio_playlist.hpp
++++ b/include/radio_playlist.hpp
+@@ -10,7 +10,8 @@ enum radio_playlist_kind_t {
+     RADIO_PLAYLIST_NONE = 0,
+     RADIO_PLAYLIST_M3U,
+     RADIO_PLAYLIST_PLS,
+-    RADIO_PLAYLIST_HLS
++    RADIO_PLAYLIST_HLS,
++    RADIO_PLAYLIST_DASH
+ };
+ 
+ enum radio_playlist_result_t {
+diff --git a/src/radio_hls.cpp b/src/radio_hls.cpp
+index ee2ae6f..7e3b67b 100644
+--- a/src/radio_hls.cpp
++++ b/src/radio_hls.cpp
+@@ -77,6 +77,16 @@ static bool starts_case(hls_slice_t value, const char *text)
+     return true;
+ }
+ 
++/* Ad-insertion markers describe splice points or SCTE-35 metadata. They do
++ * not change the media bytes, so the audio-only client can safely ignore them
++ * while still rejecting transport features it cannot decode. */
++static bool hls_ad_marker_metadata(hls_slice_t line)
++{
++    return starts(line, "#EXT-X-DATERANGE:") || starts(line, "#EXT-X-CUE-OUT") ||
++           starts(line, "#EXT-X-CUE-IN") || starts(line, "#EXT-X-SCTE35:") ||
++           starts(line, "#EXT-X-ASSET:");
++}
++
+ static bool tag_value(hls_slice_t line, const char *tag, hls_slice_t *value)
+ {
+     if (!starts(line, tag))
+@@ -106,6 +116,33 @@ static bool parse_u64(hls_slice_t value, uint64_t *output)
+     return true;
+ }
+ 
++static int hex_digit(char value)
++{
++    if (value >= '0' && value <= '9')
++        return value - '0';
++    if (value >= 'a' && value <= 'f')
++        return value - 'a' + 10;
++    if (value >= 'A' && value <= 'F')
++        return value - 'A' + 10;
++    return -1;
++}
++
++static bool parse_iv(hls_slice_t value, uint8_t output[16])
++{
++    if (value.size != 34U || value.data[0] != '0' ||
++        (value.data[1] != 'x' && value.data[1] != 'X'))
++        return false;
++    for (unsigned i = 0U; i < 16U; ++i)
++    {
++        const int high = hex_digit(value.data[2U + i * 2U]);
++        const int low = hex_digit(value.data[3U + i * 2U]);
++        if (high < 0 || low < 0)
++            return false;
++        output[i] = (uint8_t)((high << 4) | low);
++    }
++    return true;
++}
++
+ static bool attribute(hls_slice_t list, const char *wanted, hls_slice_t *output)
+ {
+     size_t position = 0;
+@@ -224,6 +261,10 @@ radio_hls_result_t radio_hls_parse(const char *data, size_t size, const char *pl
+     uint64_t sequence = 0;
+     uint64_t variant_bandwidth = 0;
+     uint32_t variant_source_channels = 0U;
++    bool key_active = false;
++    bool key_iv_present = false;
++    char active_key_url[RADIO_HLS_URL_BYTES] = {};
++    uint8_t active_iv[16] = {};
+ 
+     size_t position = 0;
+     while (position < size)
+@@ -298,8 +339,39 @@ radio_hls_result_t radio_hls_parse(const char *data, size_t size, const char *pl
+         else if (tag_value(line, "#EXT-X-KEY:", &value))
+         {
+             hls_slice_t method;
+-            if (!attribute(value, "METHOD", &method) || !equal_case(method, "NONE"))
++            if (!attribute(value, "METHOD", &method))
+                 return RADIO_HLS_UNSUPPORTED;
++            if (equal_case(method, "NONE"))
++            {
++                key_active = false;
++                key_iv_present = false;
++                memset(active_key_url, 0, sizeof(active_key_url));
++                memset(active_iv, 0, sizeof(active_iv));
++            }
++            else if (equal_case(method, "AES-128"))
++            {
++                hls_slice_t key_format;
++                hls_slice_t key_reference;
++                hls_slice_t iv;
++                uint8_t parsed_iv[16] = {};
++                const bool has_format = attribute(value, "KEYFORMAT", &key_format);
++                const bool has_iv = attribute(value, "IV", &iv);
++                if ((has_format && !equal_case(key_format, "identity")) ||
++                    !attribute(value, "URI", &key_reference) ||
++                    (has_iv && !parse_iv(iv, parsed_iv)))
++                    return RADIO_HLS_UNSUPPORTED;
++                const radio_hls_result_t resolved =
++                    resolve(key_reference, playlist_url, active_key_url, sizeof(active_key_url));
++                if (resolved != RADIO_HLS_OK)
++                    return resolved;
++                key_active = true;
++                key_iv_present = has_iv;
++                memcpy(active_iv, parsed_iv, sizeof(active_iv));
++            }
++            else
++            {
++                return RADIO_HLS_UNSUPPORTED;
++            }
+         }
+         else if (tag_value(line, "#EXT-X-DISCONTINUITY-SEQUENCE:", &value))
+         {
+@@ -314,7 +386,8 @@ radio_hls_result_t radio_hls_parse(const char *data, size_t size, const char *pl
+         {
+             return RADIO_HLS_UNSUPPORTED;
+         }
+-        else if (starts(line, "#EXT-X-") && !starts(line, "#EXT-X-VERSION:") &&
++        else if (starts(line, "#EXT-X-") && !hls_ad_marker_metadata(line) &&
++                 !starts(line, "#EXT-X-VERSION:") &&
+                  !starts(line, "#EXT-X-PROGRAM-DATE-TIME:") &&
+                  !starts(line, "#EXT-X-PLAYLIST-TYPE:") && !starts(line, "#EXT-X-ALLOW-CACHE:") &&
+                  !starts(line, "#EXT-X-START:") && !starts(line, "#EXT-X-SESSION-DATA:") &&
+@@ -346,6 +419,12 @@ radio_hls_result_t radio_hls_parse(const char *data, size_t size, const char *pl
+                 radio_hls_segment_t *segment = &playlist->segments[playlist->segment_count++];
+                 segment->sequence = sequence++;
+                 segment->discontinuity = discontinuity ? 1U : 0U;
++                segment->encrypted = key_active ? 1U : 0U;
++                segment->iv_present = key_iv_present ? 1U : 0U;
++                if (key_active)
++                    memcpy(segment->key_url, active_key_url, strlen(active_key_url) + 1U);
++                if (key_iv_present)
++                    memcpy(segment->iv, active_iv, sizeof(segment->iv));
+                 discontinuity = false;
+                 const radio_hls_result_t result =
+                     resolve(line, playlist_url, segment->url, sizeof(segment->url));
+diff --git a/src/radio_playlist.cpp b/src/radio_playlist.cpp
+index 15474c2..dd003cf 100644
+--- a/src/radio_playlist.cpp
++++ b/src/radio_playlist.cpp
+@@ -111,6 +111,8 @@ radio_playlist_kind_t radio_playlist_kind_from_url(const char *url)
+         return RADIO_PLAYLIST_NONE;
+     if (extension_is(url, ".m3u8"))
+         return RADIO_PLAYLIST_HLS;
++    if (extension_is(url, ".mpd"))
++        return RADIO_PLAYLIST_DASH;
+     if (extension_is(url, ".m3u"))
+         return RADIO_PLAYLIST_M3U;
+     if (extension_is(url, ".pls"))
+@@ -124,6 +126,8 @@ radio_playlist_kind_t radio_playlist_kind_from_headers(const char *headers, size
+         return RADIO_PLAYLIST_NONE;
+     if (contains_case(headers, size, "application/vnd.apple.mpegurl"))
+         return RADIO_PLAYLIST_HLS;
++    if (contains_case(headers, size, "application/dash+xml"))
++        return RADIO_PLAYLIST_DASH;
+     if (contains_case(headers, size, "audio/x-scpls") ||
+         contains_case(headers, size, "application/pls"))
+         return RADIO_PLAYLIST_PLS;
+@@ -145,6 +149,8 @@ radio_playlist_kind_t radio_playlist_kind_from_body(const char *data, size_t siz
+     }
+     if (contains_case(data, size, "#EXT-X-"))
+         return RADIO_PLAYLIST_HLS;
++    if (contains_case(data, size, "<MPD") || contains_case(data, size, ":MPD"))
++        return RADIO_PLAYLIST_DASH;
+     if (contains_case(data, size, "[playlist]") && contains_case(data, size, "file1="))
+         return RADIO_PLAYLIST_PLS;
+     if (contains_case(data, size, "#EXTM3U"))
+--- a/src/radio_service.cpp
++++ b/src/radio_service.cpp
+@@ -20,6 +20,8 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include "playback_retry.hpp"
++#include "radio_aes128.hpp"
++#include "radio_dash.hpp"
+ #include "radio_hls.hpp"
+ #include "radio_catalog_store.hpp"
+ #include "payload_probe.hpp"
+@@ -302,9 +304,14 @@
+ #define PLAYLIST_REDIRECT_LIMIT 3U
+ #define STREAM_OPEN_DIRECT 0
+ #define STREAM_OPEN_HLS 1
++#define STREAM_OPEN_DASH 2
+ #define HLS_PLAYLIST_BUFFER_SIZE (128U * 1024U)
+ #define HLS_NETWORK_BUFFER_SIZE (16U * 1024U)
+ #define HLS_OUTPUT_BUFFER_SIZE (64U * 1024U)
++#define HLS_ENCRYPTED_SEGMENT_MAX (1024U * 1024U)
++#define DASH_DOCUMENT_BUFFER_SIZE (128U * 1024U)
++#define DASH_INIT_BUFFER_SIZE (256U * 1024U)
++#define DASH_SEGMENT_BUFFER_SIZE (1024U * 1024U)
+ #define HLS_MASTER_LIMIT 2U
+ #define HLS_LIVE_EDGE_SEGMENTS 2U
+ #define HLS_ERROR_PLAYLIST (-2101)
+@@ -955,6 +962,16 @@
+             free(document);
+             return STREAM_OPEN_HLS;
+         }
++        if (kind == RADIO_PLAYLIST_DASH)
++        {
++            SDL_strlcpy(resolved_url, current, resolved_capacity);
++            playback_request_clear(*request);
++            http_close(*connection, *request);
++            *connection = -1;
++            *request = -1;
++            free(document);
++            return STREAM_OPEN_DASH;
++        }
+ 
+         size_t document_size = 0;
+         result = read_playlist_document(*request, document, PLAYLIST_BUFFER_SIZE, &document_size);
+@@ -972,6 +989,12 @@
+             free(document);
+             return STREAM_OPEN_HLS;
+         }
++        if (body_kind == RADIO_PLAYLIST_DASH)
++        {
++            SDL_strlcpy(resolved_url, current, resolved_capacity);
++            free(document);
++            return STREAM_OPEN_DASH;
++        }
+         if (body_kind == RADIO_PLAYLIST_M3U || body_kind == RADIO_PLAYLIST_PLS)
+             kind = body_kind;
+ 
+@@ -2754,18 +2777,32 @@
+     radio_ts_aac_parser_t *transport;
+     uint8_t *network;
+     uint8_t *output;
++    uint8_t *encrypted_segment;
+     size_t output_at;
+     size_t output_size;
++    size_t encrypted_size;
++    size_t encrypted_parse_at;
+     char playlist_url[RADIO_HLS_URL_BYTES];
++    uint8_t key[16];
++    uint8_t segment_iv[16];
+     uint64_t next_sequence;
+     uint64_t segment_sequence;
+     uint32_t reload_at;
+     unsigned source_channels;
+     bool discontinuity_pending;
++    bool segment_encrypted;
++    bool encrypted_ready;
+     int connection;
+     int request;
+ };
+ 
++static void hls_secure_zero(void *memory, size_t size)
++{
++    volatile uint8_t *bytes = static_cast<volatile uint8_t *>(memory);
++    while (size-- != 0U)
++        *bytes++ = 0U;
++}
++
+ static void hls_request_close(hls_reader_t *reader)
+ {
+     if (reader->request >= 0)
+@@ -2775,6 +2812,61 @@
+     reader->request = -1;
+ }
+ 
++static int hls_fetch_key(const char *url, uint8_t key[16])
++{
++    int connection = -1;
++    int request = -1;
++    const int opened = http_open(url, false, "AAC", &connection, &request, nullptr);
++    if (opened < 0)
++        return opened;
++    uint8_t response[17];
++    size_t received = 0U;
++    while (received < sizeof(response) && !SDL_AtomicGet(&g_stop_playback))
++    {
++        const int amount = sceHttpReadData(request, response + received, sizeof(response) - received);
++        if (amount < 0)
++        {
++            hls_secure_zero(response, sizeof(response));
++            received = 0U;
++            break;
++        }
++        if (amount == 0)
++            break;
++        received += (size_t)amount;
++    }
++    playback_request_clear(request);
++    http_close(connection, request);
++    if (SDL_AtomicGet(&g_stop_playback))
++    {
++        hls_secure_zero(response, sizeof(response));
++        return 0;
++    }
++    if (received != 16U)
++    {
++        hls_secure_zero(response, sizeof(response));
++        return HLS_ERROR_PLAYLIST;
++    }
++    memcpy(key, response, 16U);
++    hls_secure_zero(response, sizeof(response));
++    return 0;
++}
++
++static void hls_segment_iv(const radio_hls_segment_t *segment, uint8_t iv[16])
++{
++    memset(iv, 0, 16U);
++    if (segment->iv_present != 0U)
++    {
++        memcpy(iv, segment->iv, 16U);
++        return;
++    }
++    uint64_t sequence = segment->sequence;
++    for (int i = 15; i >= 8; --i)
++    {
++        iv[i] = (uint8_t)(sequence & UINT64_C(0xff));
++        sequence >>= 8U;
++    }
++}
++
+ static int hls_fetch_playlist(const char *initial_url, radio_hls_playlist_t *playlist,
+                               char *media_url, size_t media_url_size, unsigned *source_channels)
+ {
+@@ -2875,6 +2967,13 @@
+     hls_request_close(reader);
+     free(reader->output);
+     free(reader->network);
++    if (reader->encrypted_segment != nullptr)
++    {
++        hls_secure_zero(reader->encrypted_segment, HLS_ENCRYPTED_SEGMENT_MAX);
++        free(reader->encrypted_segment);
++    }
++    hls_secure_zero(reader->key, sizeof(reader->key));
++    hls_secure_zero(reader->segment_iv, sizeof(reader->segment_iv));
+     free(reader->transport);
+     free(reader->playlist);
+     memset(reader, 0, sizeof(*reader));
+@@ -2958,6 +3057,29 @@
+             return (int)copy;
+         }
+ 
++        if (reader->encrypted_ready)
++        {
++            if (reader->encrypted_parse_at < reader->encrypted_size)
++            {
++                const size_t remaining = reader->encrypted_size - reader->encrypted_parse_at;
++                const size_t chunk = remaining < HLS_NETWORK_BUFFER_SIZE
++                                         ? remaining
++                                         : HLS_NETWORK_BUFFER_SIZE;
++                const radio_ts_aac_result_t parsed = radio_ts_aac_feed(
++                    reader->transport, reader->encrypted_segment + reader->encrypted_parse_at,
++                    chunk);
++                reader->encrypted_parse_at += chunk;
++                if (parsed != RADIO_TS_AAC_OK)
++                    return HLS_ERROR_TRANSPORT + (int)parsed;
++                continue;
++            }
++            reader->encrypted_ready = false;
++            reader->encrypted_size = 0U;
++            reader->encrypted_parse_at = 0U;
++            reader->next_sequence = reader->segment_sequence + 1U;
++            continue;
++        }
++
+         if (reader->request < 0)
+         {
+             int segment = hls_find_segment(reader);
+@@ -2978,6 +3100,22 @@
+                 radio_ts_aac_reset(reader->transport);
+                 reader->discontinuity_pending = true;
+             }
++            reader->segment_encrypted = item->encrypted != 0U;
++            if (reader->segment_encrypted)
++            {
++                hls_segment_iv(item, reader->segment_iv);
++                const int key_result = hls_fetch_key(item->key_url, reader->key);
++                if (key_result < 0)
++                    return key_result;
++                if (reader->encrypted_segment == nullptr)
++                {
++                    reader->encrypted_segment = static_cast<uint8_t *>(
++                        malloc(HLS_ENCRYPTED_SEGMENT_MAX));
++                    if (reader->encrypted_segment == nullptr)
++                        return -1;
++                }
++                reader->encrypted_size = 0U;
++            }
+             const int result =
+                 http_open(item->url, true, "AAC", &reader->connection, &reader->request, nullptr);
+             if (result < 0)
+@@ -2997,7 +3135,37 @@
+         if (received == 0)
+         {
+             hls_request_close(reader);
+-            reader->next_sequence = reader->segment_sequence + 1U;
++            if (reader->segment_encrypted)
++            {
++                if (reader->encrypted_size == 0U || (reader->encrypted_size & 15U) != 0U)
++                    return HLS_ERROR_PLAYLIST;
++                size_t plain_size = 0U;
++                const int decrypted = radio_aes128_cbc_decrypt(
++                    reader->encrypted_segment, reader->encrypted_size, reader->key,
++                    reader->segment_iv,
++                    &plain_size);
++                hls_secure_zero(reader->segment_iv, sizeof(reader->segment_iv));
++                hls_secure_zero(reader->key, sizeof(reader->key));
++                if (decrypted != 0 || plain_size == 0U)
++                    return HLS_ERROR_PLAYLIST;
++                reader->encrypted_size = plain_size;
++                reader->encrypted_parse_at = 0U;
++                reader->encrypted_ready = true;
++                reader->segment_encrypted = false;
++            }
++            else
++            {
++                reader->next_sequence = reader->segment_sequence + 1U;
++            }
++            continue;
++        }
++        if (reader->segment_encrypted)
++        {
++            const size_t amount = (size_t)received;
++            if (amount > HLS_ENCRYPTED_SEGMENT_MAX - reader->encrypted_size)
++                return HLS_ERROR_PLAYLIST;
++            memcpy(reader->encrypted_segment + reader->encrypted_size, reader->network, amount);
++            reader->encrypted_size += amount;
+             continue;
+         }
+         reader->output_at = 0U;
+@@ -3010,6 +3178,129 @@
+     return 0;
+ }
+ 
++struct dash_reader_t
++{
++    radio_dash_manifest_t *manifest;
++    radio_dash_aac_config_t config;
++    uint8_t *segment;
++    uint8_t *output;
++    size_t output_at;
++    size_t output_size;
++    uint32_t next_segment;
++};
++
++static int dash_read_resource(const char *url, uint8_t *buffer, size_t capacity, size_t *size)
++{
++    int connection = -1;
++    int request = -1;
++    const int opened = http_open(url, false, "AAC", &connection, &request, nullptr);
++    if (opened < 0)
++        return opened;
++    const int result = read_playlist_document(request, (char *)buffer, capacity, size);
++    playback_request_clear(request);
++    http_close(connection, request);
++    return SDL_AtomicGet(&g_stop_playback) ? 0 : result;
++}
++
++static int dash_reader_open(dash_reader_t *reader, const char *url)
++{
++    memset(reader, 0, sizeof(*reader));
++    reader->manifest = static_cast<radio_dash_manifest_t *>(malloc(sizeof(*reader->manifest)));
++    reader->segment = static_cast<uint8_t *>(malloc(DASH_SEGMENT_BUFFER_SIZE));
++    reader->output = static_cast<uint8_t *>(malloc(DASH_SEGMENT_BUFFER_SIZE));
++    auto *document = static_cast<char *>(malloc(DASH_DOCUMENT_BUFFER_SIZE));
++    auto *init_segment = static_cast<uint8_t *>(malloc(DASH_INIT_BUFFER_SIZE));
++    if (reader->manifest == nullptr || reader->segment == nullptr || reader->output == nullptr ||
++        document == nullptr || init_segment == nullptr)
++    {
++        free(document);
++        free(init_segment);
++        return -1;
++    }
++
++    size_t document_size = 0U;
++    int result = dash_read_resource(url, (uint8_t *)document, DASH_DOCUMENT_BUFFER_SIZE,
++                                    &document_size);
++    if (result >= 0 && !SDL_AtomicGet(&g_stop_playback))
++    {
++        const radio_dash_result_t parsed =
++            radio_dash_parse_mpd(document, document_size, url, reader->manifest);
++        if (parsed != RADIO_DASH_OK)
++            result = -2300 + (int)parsed;
++    }
++    size_t init_size = 0U;
++    if (result >= 0 && !SDL_AtomicGet(&g_stop_playback))
++    {
++        result = dash_read_resource(reader->manifest->initialization_url, init_segment,
++                                    DASH_INIT_BUFFER_SIZE, &init_size);
++        if (result >= 0)
++        {
++            const radio_dash_result_t configured =
++                radio_dash_parse_aac_init(init_segment, init_size, &reader->config);
++            if (configured != RADIO_DASH_OK)
++                result = -2310 + (int)configured;
++        }
++    }
++    memset(init_segment, 0, DASH_INIT_BUFFER_SIZE);
++    free(init_segment);
++    free(document);
++    if (result < 0 || SDL_AtomicGet(&g_stop_playback))
++        return result;
++    return reader->manifest->segment_count != 0U ? 0 : -2300;
++}
++
++static void dash_reader_close(dash_reader_t *reader)
++{
++    if (reader->segment != nullptr)
++    {
++        memset(reader->segment, 0, DASH_SEGMENT_BUFFER_SIZE);
++        free(reader->segment);
++    }
++    if (reader->output != nullptr)
++    {
++        memset(reader->output, 0, DASH_SEGMENT_BUFFER_SIZE);
++        free(reader->output);
++    }
++    free(reader->manifest);
++    memset(reader, 0, sizeof(*reader));
++}
++
++static int dash_stream_read(void *context, void *data, size_t capacity)
++{
++    auto *reader = static_cast<dash_reader_t *>(context);
++    while (!SDL_AtomicGet(&g_stop_playback))
++    {
++        if (reader->output_at < reader->output_size)
++        {
++            const size_t available = reader->output_size - reader->output_at;
++            const size_t amount = available < capacity ? available : capacity;
++            memcpy(data, reader->output + reader->output_at, amount);
++            reader->output_at += amount;
++            return (int)amount;
++        }
++        if (reader->next_segment >= reader->manifest->segment_count)
++            return 0;
++        size_t segment_size = 0U;
++        const int fetched = dash_read_resource(reader->manifest->segment_urls[reader->next_segment],
++                                               reader->segment, DASH_SEGMENT_BUFFER_SIZE,
++                                               &segment_size);
++        if (fetched < 0)
++            return fetched;
++        if (SDL_AtomicGet(&g_stop_playback))
++            return 0;
++        const radio_dash_result_t converted = radio_dash_fragment_to_adts(
++            reader->segment, segment_size, &reader->config, reader->output,
++            DASH_SEGMENT_BUFFER_SIZE, &reader->output_size);
++        if (converted != RADIO_DASH_OK)
++            return -2320 + (int)converted;
++        ++reader->next_segment;
++        reader->output_at = 0U;
++        if (reader->output_size == 0U)
++            continue;
++    }
++    return 0;
++}
++
+ static int play_audiodec_reader(stream_read_fn read_stream, void *read_context,
+                                 unsigned source_channels, bool mp3, uint64_t *output_frames)
+ {
+@@ -3264,6 +3555,17 @@
+         hls_reader_close(&reader);
+         return result;
+     }
++    if (mode == STREAM_OPEN_DASH)
++    {
++        dash_reader_t reader;
++        int result = dash_reader_open(&reader, resolved_url);
++        if (result >= 0 && !SDL_AtomicGet(&g_stop_playback))
++        {
++            result = play_audiodec_reader(dash_stream_read, &reader, 0U, false, output_frames);
++        }
++        dash_reader_close(&reader);
++        return result;
++    }
+ 
+     const unsigned source_channels = http_audio_channels(request);
+     icy_metadata_reader_t metadata_reader;
+@@ -3339,10 +3641,12 @@
+     auto *station = static_cast<radio_station_t *>(station_copy);
+     int result = -1;
+     unsigned failures = 0U;
++    uint64_t last_output_frames = 0U;
+     for (;;)
+     {
+         uint64_t output_frames = 0U;
+         result = play_stream(station, &output_frames);
++        last_output_frames = output_frames;
+         if (result >= 0 || SDL_AtomicGet(&g_stop_playback) || SDL_AtomicGet(&g_shutting_down))
+             break;
+         const bool stable_playback = playback_retry_is_stable(output_frames, AUDIO_OUT_RATE);
+@@ -3358,8 +3662,19 @@
+             SDL_Delay(25U);
+         }
+     }
++    const bool stop_requested = SDL_AtomicGet(&g_stop_playback) || SDL_AtomicGet(&g_shutting_down);
++    if (!stop_requested)
++    {
++        /* One bounded summary after retries are exhausted; never log stream
++         * URLs because M3U paths can contain short-lived access tokens. */
++        fprintf(stderr,
++                "[ProsperoRadio][playback] ended station=%s codec=%s hls=%u result=%d "
++                "frames=%llu retries=%u\n",
++                station->uuid, station->codec, (unsigned)station->hls, result,
++                (unsigned long long)last_output_frames, failures);
++    }
+     free(station);
+-    if (SDL_AtomicGet(&g_stop_playback) || SDL_AtomicGet(&g_shutting_down))
++    if (stop_requested)
+     {
+         set_playback_state(RADIO_PLAYBACK_STOPPED, 0, 0, 0);
+     }

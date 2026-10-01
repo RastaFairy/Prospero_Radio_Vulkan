@@ -36,6 +36,9 @@ constexpr char kSharedReportPath[] = "/download0/prospero-payload-shared.log";
 constexpr char kPayloadFilename[] = "ProsperoRadioDataBridge.elf";
 constexpr std::uint32_t kMaximumTransfer = 64U * 1024U * 1024U;
 constexpr std::size_t kTransferChunk = 32768U;
+constexpr std::size_t kMaximumAuxStorage =
+    RADIO_AUX_PLAYLIST_MAX_BYTES + RADIO_AUX_PLAYLIST_ENVELOPE_BYTES;
+constexpr unsigned char kAuxEnvelopeMagic[8] = {'P', 'R', 'A', 'U', 'X', '0', '1', '\n'};
 constexpr char kBridgeMagic[] = "PRPC";
 constexpr unsigned short kBridgePort = 7001;
 
@@ -48,7 +51,9 @@ enum BridgeOp : unsigned char
     kStatus = 5,
     kStartAux = 6,
     kStopAux = 7,
-    kAttach = 8
+    kAttach = 8,
+    kGetAuxBuffer = 9,
+    kPutAuxBuffer = 10
 };
 
 enum BridgeStatus : unsigned char
@@ -84,7 +89,7 @@ FileSpec GetFileSpec(radio_payload_file_t file)
     case RADIO_PAYLOAD_REPORT:
         return {kSharedReportPath};
     case RADIO_PAYLOAD_AUXLIST:
-        return {"/download0/radio-aux.m3u"};
+        return {nullptr};
     case RADIO_PAYLOAD_AUXFAVORITES:
         return {"/download0/radio-aux-favorites.bin"};
     default:
@@ -472,6 +477,113 @@ bool GetRemoteFile(radio_payload_file_t file, const char *local_path, bool *not_
     return ok;
 }
 
+bool GetRemoteAuxBuffer(void *buffer, std::size_t capacity, std::size_t *size,
+                        unsigned char *format, bool *not_found)
+{
+    if (not_found)
+        *not_found = false;
+    if (buffer == nullptr || size == nullptr || format == nullptr ||
+        capacity < RADIO_AUX_PLAYLIST_MAX_BYTES)
+        return false;
+    const int socket_fd = BridgeChannel();
+    if (socket_fd < 0)
+        return false;
+    BridgeStatus status{};
+    std::uint32_t remaining = 0U;
+    if (!SendRequestHeader(socket_fd, kGetAuxBuffer, 0U, 0U) ||
+        !ReceiveResponseHeader(socket_fd, &status, &remaining))
+    {
+        CloseBridgeChannel();
+        return false;
+    }
+    if (status == kBridgeNotFound)
+    {
+        if (not_found)
+            *not_found = true;
+        return false;
+    }
+    if (status != kBridgeOk)
+        return false;
+    if (remaining > capacity || remaining > kMaximumAuxStorage)
+    {
+        CloseBridgeChannel();
+        return false;
+    }
+
+    auto *bytes = static_cast<unsigned char *>(buffer);
+    const std::uint32_t stored_size = remaining;
+    std::size_t offset = 0U;
+    while (remaining > 0U)
+    {
+        const std::size_t chunk = remaining < kTransferChunk ? remaining : kTransferChunk;
+        if (!ReceiveAll(socket_fd, bytes + offset, chunk))
+        {
+            CloseBridgeChannel();
+            return false;
+        }
+        remaining -= static_cast<std::uint32_t>(chunk);
+        offset += chunk;
+    }
+
+    /* Before the envelope was introduced the only stored AUX document type
+     * was M3U, matching the legacy radio-aux.m3u filename. */
+    *format = RADIO_AUX_FORMAT_M3U;
+    *size = stored_size;
+    if (*size >= RADIO_AUX_PLAYLIST_ENVELOPE_BYTES &&
+        std::memcmp(bytes, kAuxEnvelopeMagic, sizeof(kAuxEnvelopeMagic)) == 0)
+    {
+        const unsigned char stored_format = bytes[sizeof(kAuxEnvelopeMagic)];
+        if (stored_format > RADIO_AUX_FORMAT_ASX)
+            return false;
+        *format = stored_format;
+        *size -= RADIO_AUX_PLAYLIST_ENVELOPE_BYTES;
+        std::memmove(bytes, bytes + RADIO_AUX_PLAYLIST_ENVELOPE_BYTES, *size);
+    }
+    if (*size > RADIO_AUX_PLAYLIST_MAX_BYTES)
+        return false;
+    Report("AUX list read from /data/radio into memory bytes=%u format=%u",
+           static_cast<unsigned>(*size), static_cast<unsigned>(*format));
+    return true;
+}
+
+bool PutRemoteAuxBuffer(const void *buffer, std::size_t size, unsigned char format)
+{
+    if (buffer == nullptr || size > RADIO_AUX_PLAYLIST_MAX_BYTES ||
+        format > RADIO_AUX_FORMAT_ASX)
+        return false;
+    const int socket_fd = BridgeChannel();
+    if (socket_fd < 0)
+        return false;
+
+    unsigned char envelope[RADIO_AUX_PLAYLIST_ENVELOPE_BYTES]{};
+    std::memcpy(envelope, kAuxEnvelopeMagic, sizeof(kAuxEnvelopeMagic));
+    envelope[sizeof(kAuxEnvelopeMagic)] = format;
+    const std::uint32_t stored_size = static_cast<std::uint32_t>(
+        size + RADIO_AUX_PLAYLIST_ENVELOPE_BYTES);
+    bool ok = SendRequestHeader(socket_fd, kPutAuxBuffer, 0U, stored_size) &&
+              SendAll(socket_fd, envelope, sizeof(envelope)) && SendAll(socket_fd, buffer, size);
+    if (!ok)
+        CloseBridgeChannel();
+    if (ok)
+    {
+        BridgeStatus status{};
+        std::uint32_t response_size = 0U;
+        if (!ReceiveResponseHeader(socket_fd, &status, &response_size))
+        {
+            CloseBridgeChannel();
+            ok = false;
+        }
+        else
+            ok = status == kBridgeOk && response_size == 0U;
+    }
+    if (ok)
+        Report("AUX list stored in /data/radio from memory bytes=%u format=%u",
+               static_cast<unsigned>(size), static_cast<unsigned>(format));
+    else
+        Report("AUX list store failed status or transfer error=%d", errno);
+    return ok;
+}
+
 bool PutLocalFile(radio_payload_file_t file, const char *local_path)
 {
     if (local_path == nullptr)
@@ -560,7 +672,8 @@ bool SyncFile(radio_payload_file_t file)
 bool PushFile(radio_payload_file_t file)
 {
     const FileSpec spec = GetFileSpec(file);
-    if (!g_bridge_ready.load() || spec.path == nullptr || file == RADIO_PAYLOAD_REPORT)
+    if (!g_bridge_ready.load() || spec.path == nullptr || file == RADIO_PAYLOAD_REPORT ||
+        file == RADIO_PAYLOAD_AUXLIST)
         return false;
     const bool result = PutLocalFile(file, spec.path);
     if (!result)
@@ -721,7 +834,7 @@ bool radio_payload_bridge_push_file(radio_payload_file_t file, const char *local
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
-    if (!g_bridge_ready.load() || file == RADIO_PAYLOAD_REPORT)
+    if (!g_bridge_ready.load() || file == RADIO_PAYLOAD_REPORT || file == RADIO_PAYLOAD_AUXLIST)
         return false;
     const bool result = PutLocalFile(file, local_path);
     if (!result)
@@ -805,19 +918,37 @@ bool radio_payload_bridge_aux_running()
 #endif
 }
 
-bool radio_payload_bridge_fetch_aux()
+bool radio_payload_bridge_fetch_aux_buffer(void *buffer, size_t capacity, size_t *size,
+                                           unsigned char *format, bool *not_found)
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
     if (!g_bridge_ready.load())
         return false;
-    bool not_found = false;
-    const bool fetched = GetRemoteFile(RADIO_PAYLOAD_AUXLIST,
-                                       "/download0/radio-aux.m3u", &not_found);
-    Report("AUX list transfer from /data/radio %s",
-           fetched ? "PASS" : not_found ? "NOT_FOUND" : "FAIL");
-    return fetched;
+    return GetRemoteAuxBuffer(buffer, capacity, size, format, not_found);
 #else
+    (void)buffer;
+    (void)capacity;
+    (void)size;
+    (void)format;
+    if (not_found)
+        *not_found = false;
+    return false;
+#endif
+}
+
+bool radio_payload_bridge_store_aux_buffer(const void *buffer, size_t size,
+                                           unsigned char format)
+{
+#if defined(PROSPERO_DATA_BRIDGE_ENABLED)
+    std::lock_guard<std::mutex> lock(g_bridge_mutex);
+    if (!g_bridge_ready.load())
+        return false;
+    return PutRemoteAuxBuffer(buffer, size, format);
+#else
+    (void)buffer;
+    (void)size;
+    (void)format;
     return false;
 #endif
 }

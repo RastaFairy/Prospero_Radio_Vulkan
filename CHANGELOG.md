@@ -1,17 +1,44 @@
 # Registro de cambios — ProsperoRadio Vulkan Edition
 
-> **Build 01.000.042** · paquete generado y gate aprobado; prueba parcial en PS5 documentada.
-> No es una release certificada: las capturas muestran la versión, pero no se cotejó el hash instalado.
+> **Build 01.000.046** · paquete generado, gate aprobado y observación en PS5 comunicada por el usuario.
+> La prueba confirma el comportamiento observado de esta build, no la compatibilidad de todos los protocolos.
 >
 > No confundir: *2.2.1* es la versión del paquete de interfaz original sobre el que se
 > construye este fork; *01.000.0XX* es la `contentVersion` que ve la consola en
 > `sce_sys/param.json` (la fija `overlay/apply-vulkan.py` en cada build).
 >
 > El flujo de compilación y sus límites se describen en
-> [`VULKAN-INTEGRATION.md`](VULKAN-INTEGRATION.md). Los fallos pendientes de v042
+> [`VULKAN-INTEGRATION.md`](VULKAN-INTEGRATION.md). Los fallos pendientes actuales
 > están en [`docs/PENDIENTES.md`](docs/PENDIENTES.md).
 
 ---
+
+## 01.000.046 — 2026-10-01 · versión canónica de la build comprobada
+
+- La versión canónica avanza a `01.000.046`. El usuario informa que se comporta
+  como la última build que había revisado: conserva sus virtudes y sus defectos
+  de DASH y algunos HLS.
+- La fuente empaquetada obtiene y guarda la lista AUX en memoria a través de las
+  operaciones RPC 9/10; el payload conserva el documento bajo `/data/radio`.
+  La app no materializa `radio-aux.m3u` en `/download0`.
+- El servidor y la app admiten la selección de M3U, M3U8, PLS, XSPF y ASX con
+  límite de 4 MiB, y la UI implementa borrado de una fila AUX al mantener
+  Cuadrado durante 3 segundos con cuenta atrás. Estos recorridos requieren
+  pruebas específicas en hardware, registradas en pendientes.
+- El paquete FFPFSC local mide 52.297.728 bytes y tiene SHA-256
+  `26B77747F9142472B0213B33E14FFAD435CB3A6B3B06157CAAD0848ADE4B8940`.
+  El gate de recursos pasó con 14 aprobados, 0 avisos y 0 fallos. El asset de
+  la release publicada manualmente tiene el mismo hash.
+- El usuario probó la v046 en PS5: mantiene una respuesta ágil, recupera la
+  configuración previa de `/data/radio` y la cruceta arriba/abajo recorre la
+  lista al mantener pulsado.
+- En reproducción, el test DASH 06 ahora se oye como ruido blanco; el usuario
+  no reporta un crash en esta prueba. Algunos streams HLS siguen fallando.
+  El resultado auditivo no demuestra que DASH o HLS funcionen correctamente;
+  el diagnóstico de protocolo/codec sigue abierto.
+- No se deben confundir estos resultados con el informe anterior de v045, donde
+  el test DASH 06 se reportó como crash. Ambas observaciones se conservan con
+  su versión correspondiente en [`docs/PENDIENTES.md`](docs/PENDIENTES.md).
 
 ## 01.000.042 — 2026-09-28 · correcciones tras observación de la v039
 

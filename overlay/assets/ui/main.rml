@@ -26,7 +26,6 @@
                     <span id="home-name">Tuning...</span>
                     <span id="home-meta">Turn the TUNING dial to find a station</span>
                     <span id="home-status">READY</span>
-                    <span id="headphone-status" class="jack-status">JACK N/A</span>
                     <span id="chip-p0" class="chip chip-off">P1</span>
                     <span id="chip-p1" class="chip chip-off">P2</span>
                     <span id="chip-p2" class="chip chip-off">P3</span>
@@ -45,16 +44,16 @@
                     <span id="list-title">RADIO BROWSER</span>
                     <div id="list-tabs">
                         <span id="list-tab-radio" class="list-tab">RADIO</span>
-                        <span id="list-tab-favorites" class="list-tab">MEM / FAVORITOS</span>
-                        <span id="list-tab-aux" class="list-tab">AUX M3U</span>
+                        <span id="list-tab-favorites" class="list-tab">FAVORITOS</span>
+                        <span id="list-tab-aux" class="list-tab">AUX</span>
                     </div>
-                    <div id="list-row-0" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-0" class="list-name"></span><span id="list-meta-0" class="list-meta"></span><span id="list-fav-0" class="list-fav">&#9733;</span></div>
-                    <div id="list-row-1" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-1" class="list-name"></span><span id="list-meta-1" class="list-meta"></span><span id="list-fav-1" class="list-fav">&#9733;</span></div>
-                    <div id="list-row-2" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-2" class="list-name"></span><span id="list-meta-2" class="list-meta"></span><span id="list-fav-2" class="list-fav">&#9733;</span></div>
-                    <div id="list-row-3" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-3" class="list-name"></span><span id="list-meta-3" class="list-meta"></span><span id="list-fav-3" class="list-fav">&#9733;</span></div>
-                    <div id="list-row-4" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-4" class="list-name"></span><span id="list-meta-4" class="list-meta"></span><span id="list-fav-4" class="list-fav">&#9733;</span></div>
-                    <div id="list-row-5" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-5" class="list-name"></span><span id="list-meta-5" class="list-meta"></span><span id="list-fav-5" class="list-fav">&#9733;</span></div>
-                    <div id="list-row-6" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-6" class="list-name"></span><span id="list-meta-6" class="list-meta"></span><span id="list-fav-6" class="list-fav">&#9733;</span></div>
+                    <div id="list-row-0" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-0" class="list-name"></span><span id="list-meta-0" class="list-meta"></span><span id="list-fav-0" class="list-fav">&#9733;</span><span id="list-delete-countdown-0" class="list-delete-countdown hidden"></span></div>
+                    <div id="list-row-1" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-1" class="list-name"></span><span id="list-meta-1" class="list-meta"></span><span id="list-fav-1" class="list-fav">&#9733;</span><span id="list-delete-countdown-1" class="list-delete-countdown hidden"></span></div>
+                    <div id="list-row-2" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-2" class="list-name"></span><span id="list-meta-2" class="list-meta"></span><span id="list-fav-2" class="list-fav">&#9733;</span><span id="list-delete-countdown-2" class="list-delete-countdown hidden"></span></div>
+                    <div id="list-row-3" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-3" class="list-name"></span><span id="list-meta-3" class="list-meta"></span><span id="list-fav-3" class="list-fav">&#9733;</span><span id="list-delete-countdown-3" class="list-delete-countdown hidden"></span></div>
+                    <div id="list-row-4" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-4" class="list-name"></span><span id="list-meta-4" class="list-meta"></span><span id="list-fav-4" class="list-fav">&#9733;</span><span id="list-delete-countdown-4" class="list-delete-countdown hidden"></span></div>
+                    <div id="list-row-5" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-5" class="list-name"></span><span id="list-meta-5" class="list-meta"></span><span id="list-fav-5" class="list-fav">&#9733;</span><span id="list-delete-countdown-5" class="list-delete-countdown hidden"></span></div>
+                    <div id="list-row-6" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-6" class="list-name"></span><span id="list-meta-6" class="list-meta"></span><span id="list-fav-6" class="list-fav">&#9733;</span><span id="list-delete-countdown-6" class="list-delete-countdown hidden"></span></div>
                     <span id="list-status">0 / 0 STATIONS</span>
                 </div>
 
@@ -81,59 +80,39 @@
                 <span class="panel-note">Cross: abrir lista importada | Circle: volver</span>
             </div>
             <div id="screen-eq" class="hidden">
-                <span class="panel-kicker">ECUALIZADOR</span>
-                <span id="eqband-0" class="eqband">60Hz 0</span>
-                <span id="eqband-1" class="eqband">250Hz 0</span>
-                <span id="eqband-2" class="eqband">1kHz 0</span>
-                <span id="eqband-3" class="eqband">4kHz 0</span>
-                <span id="eqband-4" class="eqband">12kHz 0</span>
-                <span class="panel-note">dial dcho: banda - dial izq: ganancia - X preset - triangulo volver</span>
+                <span class="panel-kicker">ECUALIZADOR · FRECUENCIAS EN Hz / kHz</span>
+                <div id="eqband-0" class="eq-control eqband"><span class="eq-label">60</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-0" class="eq-fill"></div></div><span id="eqgain-0" class="eq-value">0dB</span></div>
+                <div id="eqband-1" class="eq-control eqband"><span class="eq-label">125</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-1" class="eq-fill"></div></div><span id="eqgain-1" class="eq-value">0dB</span></div>
+                <div id="eqband-2" class="eq-control eqband"><span class="eq-label">250</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-2" class="eq-fill"></div></div><span id="eqgain-2" class="eq-value">0dB</span></div>
+                <div id="eqband-3" class="eq-control eqband"><span class="eq-label">500</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-3" class="eq-fill"></div></div><span id="eqgain-3" class="eq-value">0dB</span></div>
+                <div id="eqband-4" class="eq-control eqband"><span class="eq-label">1k</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-4" class="eq-fill"></div></div><span id="eqgain-4" class="eq-value">0dB</span></div>
+                <div id="eqband-5" class="eq-control eqband"><span class="eq-label">1.5k</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-5" class="eq-fill"></div></div><span id="eqgain-5" class="eq-value">0dB</span></div>
+                <div id="eqband-6" class="eq-control eqband"><span class="eq-label">2k</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-6" class="eq-fill"></div></div><span id="eqgain-6" class="eq-value">0dB</span></div>
+                <div id="eqband-7" class="eq-control eqband"><span class="eq-label">3k</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-7" class="eq-fill"></div></div><span id="eqgain-7" class="eq-value">0dB</span></div>
+                <div id="eqband-8" class="eq-control eqband"><span class="eq-label">4k</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-8" class="eq-fill"></div></div><span id="eqgain-8" class="eq-value">0dB</span></div>
+                <div id="eqband-9" class="eq-control eqband"><span class="eq-label">6k</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-9" class="eq-fill"></div></div><span id="eqgain-9" class="eq-value">0dB</span></div>
+                <div id="eqband-10" class="eq-control eqband"><span class="eq-label">8k</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-10" class="eq-fill"></div></div><span id="eqgain-10" class="eq-value">0dB</span></div>
+                <div id="eqband-11" class="eq-control eqband"><span class="eq-label">12k</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-11" class="eq-fill"></div></div><span id="eqgain-11" class="eq-value">0dB</span></div>
+                <div id="eqband-12" class="eq-control eqband eq-channel"><span class="eq-label">L</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-12" class="eq-fill"></div></div><span id="eqgain-12" class="eq-value">0dB</span></div>
+                <div id="eqband-13" class="eq-control eqband eq-channel"><span class="eq-label">R</span><div class="eq-track"><div class="eq-zero"></div><div id="eqfill-13" class="eq-fill"></div></div><span id="eqgain-13" class="eq-value">0dB</span></div>
+                <span class="panel-note" id="eq-help">Dcho: bandas &gt; L &gt; R  |  Izq: +/-12 dB  |  X: preset  |  Triángulo: volver</span>
             </div>
-            <div id="settings-panel" class="hidden">
-                    <span class="settings-kicker">PROSPERO RADIO  /  SETTINGS</span>
-                    <span class="settings-title">Radio settings</span>
-
-                    <div id="settings-theme-row" class="settings-theme-row">
-                        <span class="settings-theme-label">CABINET FINISH</span>
-                        <span id="settings-theme-value" class="settings-theme-value">Walnut</span>
-                        <span class="settings-theme-help">Left / right: select, Cross applies</span>
-                    </div>
-
-                    <div id="settings-volume-row" class="settings-volume-row">
-                        <span class="settings-volume-label">OUTPUT VOLUME</span>
-                        <span id="settings-volume-value" class="settings-volume-value">100%</span>
-                        <span class="settings-volume-meter"><span id="settings-volume-fill"></span></span>
-                        <span class="settings-volume-help">Rotate left stick</span>
-                    </div>
-
-                    <button id="settings-favorites" class="settings-action settings-favorites">
-                        <span class="settings-action-title">Open favorites</span>
-                        <span id="settings-favorites-count" class="settings-action-detail">0 saved stations</span>
-                    </button>
-                    <button id="settings-refresh" class="settings-action settings-refresh">
-                        <span class="settings-action-title">Update station lists</span>
-                        <span id="settings-refresh-state" class="settings-action-detail">Ready</span>
-                    </button>
-
-                    <span class="settings-controls">Cross: press  |  D-pad: move  |  Circle: back</span>
-                </div>
-
                 <div id="search-panel" class="hidden">
-                    <span class="settings-kicker">PROSPERO RADIO  /  SEARCH</span>
-                    <span class="settings-title">Find stations</span>
-                    <button id="search-query" class="settings-action search-query-button">
+                    <span class="search-kicker">PROSPERO RADIO  /  SEARCH</span>
+                    <span class="search-title">Find stations</span>
+                    <button id="search-query" class="search-action search-query-button">
                         <span id="search-query-label" class="search-query-label">Press Cross to type a station or genre...</span>
                     </button>
-                    <button id="filter-1" class="settings-action filter-1">
-                        <span id="filter-label-1" class="settings-action-title">GENRE  /  All genres</span>
+                    <button id="filter-1" class="search-action filter-1">
+                        <span id="filter-label-1" class="search-action-title">GENRE  /  All genres</span>
                     </button>
-                    <button id="filter-3" class="settings-action filter-3">
-                        <span id="filter-label-3" class="settings-action-title">QUALITY  /  Any bitrate</span>
+                    <button id="filter-3" class="search-action filter-3">
+                        <span id="filter-label-3" class="search-action-title">QUALITY  /  Any bitrate</span>
                     </button>
-                    <button id="search-apply" class="settings-action search-apply">
-                        <span class="settings-action-title">Show stations</span>
+                    <button id="search-apply" class="search-action search-apply">
+                        <span class="search-action-title">Show stations</span>
                     </button>
-                    <span class="settings-controls">Cross: edit / cycle  |  Up / Down: move  |  Circle: back</span>
+                    <span class="search-controls">Cross: edit / cycle  |  Up / Down: move  |  Circle: back</span>
                 </div>
             </div>
         </div>

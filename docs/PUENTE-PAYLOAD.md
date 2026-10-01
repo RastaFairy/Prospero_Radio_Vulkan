@@ -17,6 +17,8 @@ El protocolo `PRPC` v1 usa cabecera de 12 bytes y operaciones acotadas:
 - `1 PING`, `2 GET`, `3 PUT`, `4 STOP`, `5 STATUS`.
 - `6 START_AUX` enlaza el servidor externo en el puerto 7000.
 - `7 STOP_AUX` cierra el listener y `8 ATTACH` actualiza el PID propietario.
+- `9 GET_AUX_BUFFER` lee la lista persistente directamente a memoria de la app;
+  `10 PUT_AUX_BUFFER` guarda sus bytes desde memoria en el payload.
 - IDs de archivo: `1` catálogo SQLite, `2` favoritos, `3` EQ, `4` presets,
   `5` informe compartido, `6` `/data/radio/radio-aux.m3u` y `7` favoritos AUX.
 
@@ -32,19 +34,27 @@ su informe en `/data/radio/prospero-payload-probe.log`.
    TCP 7000 en todas las interfaces. Si el enlace falla, devuelve error y la
    pantalla no debe indicar que está listo.
 2. Un equipo de la misma LAN abre `http://IP-DE-LA-CONSOLA:7000/` y envía la
-   lista con `POST /list` y `Content-Length`.
-3. El payload limita el cuerpo a 32 MiB y escribe
+   lista con `POST /list`, `Content-Length` y el tipo de lista indicado en
+   `X-Playlist-Format`.
+3. El payload limita el cuerpo a 4 MiB y escribe
    `/data/radio/radio-aux.m3u.tmp`; exige recibir el tamaño completo, hace
    `fsync` y renombra el fichero. Una carga incompleta conserva la lista previa.
-4. Al elegir BARRIDO, la app recupera por RPC el ID 6 desde `/data/radio` hacia
-   `/download0/radio-aux.m3u`, analiza las entradas M3U y presenta las emisoras en
-   la fuente AUX. Los metadatos `#EXTINF` se usan como nombre/grupo; solo se
-   aceptan URLs HTTP(S).
-5. La importación no prueba por adelantado que todos los streams estén vivos. La
-   conexión real se determina al sintonizar. **La deduplicación al reenviar una
-   lista idéntica está pendiente**: el usuario observó que una nueva carga puede
-   añadir repetidas las emisoras ya importadas.
-6. Al salir de AUX, usar POWER o cerrar la app, se solicita `STOP_AUX`. En el
+4. La lista recibida se publica en `/data/radio/radio-aux.m3u` mediante archivo
+   temporal, `fsync` y renombrado. Un sobre de 9 bytes conserva el formato aunque
+   el nombre persistente del archivo termine en `.m3u`.
+5. Al elegir BARRIDO, la app recupera el contenido por `GET_AUX_BUFFER` (RPC 9)
+   a un buffer en memoria, analiza las entradas y presenta emisoras AUX. Los
+   metadatos se conservan y solo se aceptan URLs HTTP(S); no se crea una copia
+   de la lista en `/download0`.
+6. La importación no prueba por adelantado que todos los streams estén vivos. La
+   conexión real se determina al sintonizar. El payload reemplaza la lista
+   anterior al recibir otra carga; el escáner de la app descarta URLs repetidas
+   dentro del M3U recibido (incluido en la fuente compilada para v046). Si la
+   repetición entre cargas persiste, cotejar el M3U recibido y la pantalla para
+   localizar qué capa reintroduce las filas.
+7. Al editar o borrar una emisora, la app serializa la lista en memoria y la
+   guarda mediante `PUT_AUX_BUFFER` (RPC 10), directamente en `/data/radio`.
+8. Al salir de AUX, usar POWER o cerrar la app, se solicita `STOP_AUX`. En el
    cierre normal también se guardan los datos persistentes, se manda `STOP` y
    la app espera EOF del canal del payload hasta el límite implementado.
 
@@ -61,9 +71,12 @@ trabajo; el payload es quien lee y escribe:
 
 - `radio-browser.sqlite3` — catálogo.
 - `radio-browser-favorites.bin` — UUID de favoritos.
-- `radio-eq.txt` — ganancias de cinco bandas.
+- `radio-eq.txt` — formato `EQ2`: 12 ganancias de banda y faders L/R; la app
+  migra el formato anterior de cinco valores. Está incluido en la fuente v046;
+  no inferir una verificación manual de cada banda a partir de la prueba general.
 - `radio-presets.bin` — tres memorias del panel táctil.
-- `radio-aux.m3u` — lista recibida por AUX.
+- `radio-aux.m3u` — lista AUX recibida/editada; los primeros 9 bytes guardan
+  el identificador de formato (`M3U`, `M3U8`, `PLS`, `XSPF`, `ASX` o auto).
 - `radio-aux-favorites.bin` — favoritos de la lista AUX.
 - `prospero-payload-probe.log` — evidencia de acceso y actividad del payload.
 
@@ -79,6 +92,14 @@ AUX en pantalla; también muestran pestañas defectuosas y `JACK N/A`. El paquet
 instalado no se cotejó por hash. Estas capturas no demuestran por sí solas el
 ciclo completo de escritura, persistencia tras reinicio ni cierre del payload.
 
+## Estado observado en 01.000.046
+
+El usuario confirma que la app reconoce su configuración previa en `/data/radio`.
+Eso acredita que la configuración ya presente fue leída en esa ejecución, pero
+no identifica cada archivo ni prueba por sí solo una escritura AUX nueva o una
+reapertura tras reiniciar. La lista AUX usa buffers RPC en v046; los favoritos
+AUX y otros ficheros de trabajo mantienen rutas locales independientes.
+
 ## Verificación pendiente en hardware
 
 En la consola, contrastar el klog con
@@ -87,12 +108,19 @@ En la consola, contrastar el klog con
 - inicio por elfldr, handshake en 7001, operaciones de estado/start/stop y PID;
 - GET/PUT de ficheros y persistencia tras cerrar y volver a abrir la app;
 - acceso HTTP al 7000 desde otro dispositivo, rechazo de longitud ausente,
-  truncada o superior a 32 MiB y conservación de la lista anterior;
-- BARRIDO vuelve a leer la lista persistente, carga las emisoras con sus metadatos
-  y no agrega otra copia de una URL ya importada (esta deduplicación sigue pendiente);
+  truncada o superior a 4 MiB y conservación de la lista anterior;
+- BARRIDO vuelve a leer la lista persistente, carga emisoras/metadatos y muestra
+  una sola fila por URL repetida; validar también importación M3U8, PLS, XSPF y
+  ASX con codificaciones, metadatos y URLs relativos pertinentes;
+- confirmar que fetch, edición y guardado mantienen la lista en memoria de app y
+  en `/data/radio`, sin crear `/download0/radio-aux.m3u`;
+- mantener Cuadrado 3 segundos sobre una fila AUX, confirmar cuenta atrás,
+  cancelar al soltar antes y comprobar que al completar se elimina solo esa fila
+  y queda persistida en `/data/radio`;
 - dejar un cliente lento conectado y comprobar que AUX se detiene al abandonar
   la vista y que POWER/cierre del sistema liberan tanto listener como payload.
 
-La importación de M3U al catálogo, su reproducción real, la detección de
-auriculares y el color físico de la barra luminosa siguen siendo comprobaciones
-separadas.
+La importación de M3U al catálogo, su reproducción real y el color físico de la
+barra luminosa siguen siendo comprobaciones separadas. La detección del jack del
+DualSense queda fuera del alcance del proyecto; `JACK N/A` no se considera una
+lectura física validada.

@@ -2,7 +2,7 @@
 # Copyright (C) 2026 BlackBearReloaded
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Post-build precision gate for the ProsperoRadio package (v036, hardened).
+"""Post-build precision gate for the ProsperoRadio package.
 
 Run against the assembled package. It mirrors the shipped reader and layout
 rules so a regression in any of them fails the gate before flashing:
@@ -10,9 +10,8 @@ rules so a regression in any of them fails the gate before flashing:
   V  version coherence: apply-vulkan VERSION == param.json == RML stamp ==
      runtime banner inside eboot.bin
   P  persistence helper: named ELF is present and targets x86-64 ELF64
-  R  RML: full tag-stack well-formedness (not just div balance); every static
-     id the C++ touches exists; every <img> source is packaged; 21 volume
-     frames stacked
+  R  RML: XML structure and unique ids; every static id the C++ touches
+     exists; every image source is packaged; 21 volume frames stacked
   C  CSS cascade: classes used by the RML are defined; atlas geometry rules
      match manifest-hybrid.json; the LAST same-specificity rule for each atlas
      class must carry that class's own rect (no later base rule overriding it)
@@ -29,9 +28,18 @@ from __future__ import annotations
 import json
 import re
 import sys
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
-SURFACES = ("screen-home", "screen-list", "screen-genres", "screen-aux", "screen-barrido", "screen-eq", "settings-panel", "search-panel")
+SURFACES = (
+    "screen-home",
+    "screen-list",
+    "screen-genres",
+    "screen-aux",
+    "screen-barrido",
+    "screen-eq",
+    "search-panel",
+)
 ATLAS_CLASSES = ("volume-frame-img", "tuner-frame-img") + tuple(
     f"btn-rect-{name}"
     for name in ("home", "radio", "favorites", "genres", "search", "settings", "play-pause")
@@ -168,41 +176,25 @@ def check_persistence_payload(pkg: Path, report: Report) -> None:
 
 def check_rml(pkg: Path, overlay: Path, report: Report) -> None:
     rml = (pkg / "assets/ui/main.rml").read_text(encoding="utf-8")
+    try:
+        root = ET.fromstring(rml)
+    except ET.ParseError as error:
+        report.fail("rml", f"XML/RML parse error: {error}")
+        return
+    report.ok("rml", "XML/RML structure parsed")
 
-    # full tag-stack well-formedness (self-closing and void tags excluded)
-    stack: list[str] = []
-    broke = False
-    for token in re.finditer(r"<(/?)([a-zA-Z][a-zA-Z0-9_-]*)((?:\"[^\"]*\"|[^>])*?)(/?)>", rml):
-        closing, tag, _tail, self_close = token.groups()
-        if self_close == "/" or tag in ("img", "br", "hr", "input", "link", "meta"):
-            continue
-        if closing:
-            if not stack or stack[-1] != tag:
-                broke = True
-                report.fail(
-                    "rml",
-                    f"mismatched </{tag}> near offset {token.start()} "
-                    f"(stack top: {stack[-1] if stack else 'empty'})",
-                )
-                break
-            stack.pop()
-        else:
-            stack.append(tag)
-    if not broke:
-        if stack:
-            report.fail("rml", f"unclosed tags remain: {stack}")
-        else:
-            report.ok("rml", "tag stack well-formed")
-
-    depth = 0
-    for token in re.finditer(r"<div\b|</div>", rml):
-        depth += 1 if token.group(0).startswith("<div") else -1
-    if depth != 0:
-        report.fail("rml", f"div balance {depth}")
+    ids_in_document = [element.get("id") for element in root.iter() if element.get("id")]
+    seen_ids: set[str] = set()
+    duplicate_ids: set[str] = set()
+    for uid in ids_in_document:
+        if uid in seen_ids:
+            duplicate_ids.add(uid)
+        seen_ids.add(uid)
+    if duplicate_ids:
+        report.fail("rml", f"duplicate ids: {sorted(duplicate_ids)}")
     else:
-        report.ok("rml", "div balance exact")
-
-    ids = set(re.findall(r'id="([^"]+)"', rml))
+        report.ok("rml", f"all {len(ids_in_document)} ids are unique")
+    ids = set(ids_in_document)
     app_src = (overlay / "src/radio_app.cpp").read_text(encoding="utf-8")
     used = set(
         re.findall(
@@ -227,7 +219,7 @@ def check_rml(pkg: Path, overlay: Path, report: Report) -> None:
     else:
         report.ok("rml", "21 volume frames stacked")
 
-    sources = re.findall(r'src="([^"]+)"', rml)
+    sources = [element.get("src") for element in root.iter() if element.get("src")]
     absent = [src for src in sources if not (pkg / "assets/ui" / src).is_file()]
     if absent:
         report.fail("rml", f"<img> sources missing in package: {absent[:4]}")

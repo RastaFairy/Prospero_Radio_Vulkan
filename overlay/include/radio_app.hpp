@@ -5,13 +5,14 @@
 // Physical-radio frontend (01.000.019): the seven printed buttons of the
 // cabinet are the navigation (D-pad moves the finger, Cross presses), the
 // right dial tunes, the left dial is volume. The smoked glass shows one
-// surface at a time: now playing, a station list, genres, search or settings.
+// surface at a time: now playing, a station list, genres, search, AUX or EQ.
 
 #pragma once
 
 #include "radio_input.hpp"
 #include "radio_service.hpp"
 
+#include <cstddef>
 #include <vector>
 
 namespace Rml {
@@ -32,7 +33,6 @@ private:
         List,     // station list inside the glass (RADIO / FAVORITES buttons)
         Genres,   // genre list inside the glass
         Search,   // search overlay
-        Settings, // legacy panel (unreachable)
         Aux,      // external-list entry surface
         Barrido,  // list ingestion surface
         Eq,       // equalizer surface
@@ -61,6 +61,10 @@ private:
     bool list_aux_entries_[ListRows]{};
     std::vector<radio_station_t> aux_stations_;
     std::vector<radio_station_t> aux_favorites_;
+    bool aux_delete_hold_active_ = false;
+    char aux_delete_hold_uuid_[40]{};
+    unsigned long long aux_delete_hold_start_ = 0;
+    unsigned aux_delete_display_tenth_ = ~0U;
 
     unsigned genre_start_ = 0;
     unsigned genre_cursor_ = 0;
@@ -68,8 +72,6 @@ private:
 
     unsigned tuned_index_ = 0;
 
-    bool settings_open_ = false;
-    unsigned settings_focus_ = 0;
     int poweroff_ticks_ = -1;  /* >=0 while the LCD power-off fade runs */
     bool quit_requested_ = false;      /* set once, main loop breaks cooperatively (no _Exit) */
     int presets_[3] = {-1, -1, -1};   /* touchpad quick presets (station idx) */
@@ -79,7 +81,6 @@ private:
     radio_station_t preset_external_station_[3]{};
     radio_station_t tuned_station_{};
     bool tuned_station_valid_ = false;
-    int headphone_state_ = -2;
     int preset_active_ = -1;          /* zone currently tuned from, -1 = free */
     bool touch_hold_active_ = false;
     bool touch_fired_ = false;
@@ -91,8 +92,6 @@ private:
     bool lb_feedback_active_ = false;
     int eq_sel_ = 0;
     int eq_preset_ = 0;
-    int theme_index_ = 0;      /* applied cabinet finish */
-    int theme_selected_ = 0;   /* picker value in Settings */
     unsigned volume_frame_ = 20;
     unsigned tuner_state_ = 0;
 
@@ -116,18 +115,12 @@ private:
     int preset_confirm_zone_ = -1;
     unsigned long long preset_confirm_until_ = 0;
 
-    void LoadTheme();
-    void SaveTheme() const;
-    void ApplyTheme();
-    void CycleTheme(int direction);
     void ApplyVolumeFrame();
     void ApplyTunerFrame();
     void ApplyButtons();
     void ShowScreen();
     void PressButton(unsigned index);
     void RefreshVolumeDisplay();
-    void SelectTheme(int direction);
-    void ApplyTheme(int index);
     void UpdateFocusSearch();
     void UpdateEqualizer(const radio_service_status_t& status);
 
@@ -141,24 +134,31 @@ private:
     bool SaveAuxFavorites();
     bool IsAuxFavorite(const char *uuid) const;
     bool ToggleAuxFavorite(const radio_station_t &station);
+    bool SaveAuxPlaylist(const std::vector<radio_station_t> &stations,
+                         const char *excluded_uuid = nullptr);
+    bool FetchAuxPlaylist();
+    bool DeleteAuxStation(const char *uuid);
+    void BeginAuxDeleteHold();
+    void CancelAuxDeleteHold();
+    void ReleaseAuxDeleteHold();
+    void UpdateAuxDeleteHold();
     void LightbarTick();
+    void LoadEq();
     void RefreshEq();
     void SaveEq();
     void RefreshAuxPanel();
-    void RefreshHeadphoneState();
     void AdjustVolume(int direction);
     void TuneStation(int direction);
     void PlayIndex(unsigned index);
     void PlayAuxStation(const radio_station_t &station);
-    unsigned ScanAuxPlaylist();
+    unsigned ScanAuxPlaylist(const unsigned char *data, std::size_t size,
+                             unsigned char format);
     void ToggleFavoriteOnTuned();
     void BuildList();
     void RefreshList();
     void RefreshGenres();
     void RefreshHome();
     void RefreshStatus();
-    void RefreshSettings(bool refresh_favorites = true);
-    void HandleSettingsKey(radio_input_key_t key);
     void OpenSearch();
     void CloseSearch(bool apply);
     void HandleSearchKey(radio_input_key_t key);

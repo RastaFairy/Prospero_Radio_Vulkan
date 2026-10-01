@@ -1,10 +1,11 @@
-# Manual de usuario — Prospero Radio 01.000.042
+# Manual de usuario — Prospero Radio 01.000.046
 
 ## Qué muestra este manual
 
 Las pantallas son composiciones hechas con la fachada y los atlas de controles
 del proyecto. No son capturas de una PS5. Los nombres y valores se contrastaron
-con las fotos de la v042 que aportó el usuario; se usan como ejemplos de interfaz.
+con las fotos y observaciones de consola disponibles hasta la v046; las
+ilustraciones siguen siendo material gráfico, no capturas de PS5.
 
 ![Prospero Radio v042: fachada, reproducción y controles](prospero-radio-v042-portada.jpg)
 
@@ -17,7 +18,7 @@ con las fotos de la v042 que aportó el usuario; se usan como ejemplos de interf
 | MEM | Abre la lista de emisoras guardadas como favoritas. |
 | AUX | Activa el servidor local para recibir una lista M3U. |
 | BARRIDO | Lee la M3U recibida; pulsa **✕** para abrir sus emisoras. |
-| EQ | Abre el ecualizador de cinco bandas. |
+| EQ | Abre el ecualizador de doce bandas con faders L/R. |
 | PLAY/PAUSA | Inicia o detiene la reproducción. |
 | Dial/joystick izquierdo | Ajusta el volumen; dentro de EQ modifica la ganancia de la banda seleccionada. |
 | Dial/joystick derecho | Cambia de emisora; dentro de EQ selecciona la banda. |
@@ -26,26 +27,35 @@ En las listas, usa **↑/↓** para mover la selección, **✕** para sintonizar
 **□** para añadir o quitar una emisora de Favoritos y **○** para volver. Usa
 **←/→** para alternar entre Radio, Favoritos y AUX M3U. Las etiquetas de esas
 fuentes pueden aparecer vacías o solapadas en v042; la navegación sigue teniendo
-esas tres fuentes aunque el rótulo no se vea bien.
+esas tres fuentes aunque el rótulo no se vea bien. El usuario informa que en
+v046 no observa los problemas visuales anteriores; no se documentó una revisión
+por separado de cada pantalla.
+
+En la lista AUX, **mantén □ durante 3 segundos** para eliminar la emisora
+seleccionada; aparece una cuenta atrás y soltar antes cancela el borrado. Este
+gesto está en v046, pero su comprobación específica en hardware sigue pendiente.
 
 ![Ejemplo de lista y fuentes](manual/lista-fuentes-v042.jpg)
 
-Una emisora que aparece en la lista M3U aún no está necesariamente conectada.
-La app acepta URLs HTTP o HTTPS, pero comprueba el stream cuando se sintoniza.
-Los nombres repetidos al volver a importar la misma lista siguen siendo un
-pendiente conocido.
+Una emisora que aparece en una lista AUX aún no está necesariamente conectada.
+La fuente de v046 incluye lectura de M3U/M3U8, PLS, XSPF y ASX y filtra URLs
+HTTP(S), pero la matriz de formatos y codificaciones sigue pendiente de
+validación específica en PS5. Comprueba el stream cuando se sintoniza; el usuario
+reporta problemas en algunos HLS y ruido blanco en el test DASH 06.
 
-## Importar una lista M3U desde la red local
+## Importar una lista AUX desde la red local
 
 1. En la radio, abre **AUX** y deja activa la pantalla del servidor.
 2. Desde un dispositivo conectado a la misma red, visita
    `http://IP-DE-LA-CONSOLA:7000/`.
-3. Elige el fichero `.m3u` y envíalo. La página confirma la recepción.
+3. Elige un fichero `.m3u`, `.m3u8`, `.pls`, `.xspf` o `.asx` y envíalo.
+   También puedes pegar el contenido de una lista. La página confirma la recepción.
 4. Vuelve a la radio y pulsa **BARRIDO**. Cuando aparezca el número de emisoras,
    pulsa **✕** para abrir la fuente AUX M3U.
 5. Selecciona una emisora y pulsa **✕** para intentar reproducirla.
 
-La importación admite una carga de hasta 32 MiB. El servidor no tiene contraseña:
+La importación admite M3U, M3U8, PLS, XSPF y ASX, con una carga de hasta 4 MiB.
+El servidor no tiene contraseña:
 úsalo solo dentro de una red local de confianza. BARRIDO no certifica que todas
 las URLs respondan; eso solo se sabe al intentar sintonizarlas.
 
@@ -55,10 +65,10 @@ las URLs respondan; eso solo se sabe al intentar sintonizarlas.
 
 ## Ecualizador
 
-EQ presenta estas cinco bandas: **60 Hz, 250 Hz, 1 kHz, 4 kHz y 12 kHz**.
-Mueve el dial derecho para seleccionar una y el izquierdo para cambiar su
-ganancia. Pulsa **✕** para avanzar al siguiente preset; los cambios de ganancia
-y preset se guardan desde la app.
+EQ presenta doce bandas y controles de ganancia independientes para L/R. Usa la
+interfaz para seleccionar el control y modificar el nivel. Los presets recorren
+curvas de banda; el formato EQ2 persiste las doce ganancias y ambos faders.
+La lista exacta de frecuencias se muestra en el ecualizador.
 
 ![Ejemplo de valores del ecualizador observados en v042](manual/ecualizador-v042.jpg)
 
@@ -80,15 +90,19 @@ las zonas y acciones se han rotulado para reflejar el funcionamiento de la radio
 
 ![DualSense: zonas P1, P2 y P3 para recuperar y guardar presets](manual/dualsense-presets-v042-zonas-final.png)
 
-## Límites conocidos de la v042
+## Estado conocido de la v046
 
-- Las pestañas de Radio, Favoritos y AUX M3U pueden tener el texto solapado o
-  vacío.
-- Al conectar auriculares al mando, la interfaz todavía puede indicar
-  `JACK N/A`; la detección visual no está resuelta.
-- Volver a importar una M3U puede añadir estaciones repetidas.
-- La lista no verifica por adelantado cada stream; la disponibilidad se conoce
-  al sintonizar.
+- El usuario informa que la app se mantiene ágil, reconoce su configuración
+  previa en `/data/radio` y permite recorrer la lista manteniendo ↑/↓.
+- El test DASH 06 produce ruido blanco; no se reportó crash en esta prueba.
+  Algunos streams HLS siguen fallando. No se debe interpretar como compatibilidad
+  DASH/HLS confirmada.
+- AUX sigue pendiente de pruebas específicas de formatos, persistencia de edición
+  y borrado de una fila con Cuadrado mantenido 3 segundos.
+
+La detección de auriculares del DualSense queda fuera del alcance del proyecto.
+Las capturas históricas de v042 pueden mostrar `JACK N/A`; esa etiqueta no
+representaba una lectura confirmada del conector y se retiró del código fuente.
 
 El registro de tareas y su evidencia está en [`PENDIENTES.md`](PENDIENTES.md).
 La guía de mandos y atlas está en [`RADIO-CONTROLS-ATLAS.md`](RADIO-CONTROLS-ATLAS.md)

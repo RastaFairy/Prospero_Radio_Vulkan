@@ -29,7 +29,15 @@
 #define AUX_LIST_PATH DATA_DIRECTORY "/radio-aux.m3u"
 #define BRIDGE_MAX_FILE (64U * 1024U * 1024U)
 #define BRIDGE_CHUNK 32768U
-#define AUX_MAX_BODY (32U * 1024U * 1024U)
+#define AUX_MAX_BODY (4U * 1024U * 1024U)
+#define AUX_ENVELOPE_HEADER_BYTES 9U
+#define AUX_MAX_STORAGE (AUX_MAX_BODY + AUX_ENVELOPE_HEADER_BYTES)
+#define AUX_FORMAT_AUTO 0U
+#define AUX_FORMAT_M3U 1U
+#define AUX_FORMAT_M3U8 2U
+#define AUX_FORMAT_PLS 3U
+#define AUX_FORMAT_XSPF 4U
+#define AUX_FORMAT_ASX 5U
 #define RPC_PORT 7001
 #define AUX_PORT 7000
 #define BRIDGE_IDLE_SECONDS 120
@@ -43,7 +51,9 @@ enum bridge_operation
     BRIDGE_STATUS = 5,
     BRIDGE_START_AUX = 6,
     BRIDGE_STOP_AUX = 7,
-    BRIDGE_ATTACH = 8
+    BRIDGE_ATTACH = 8,
+    BRIDGE_GET_AUX_BUFFER = 9,
+    BRIDGE_PUT_AUX_BUFFER = 10
 };
 
 enum bridge_status
@@ -210,7 +220,7 @@ static int send_response(int fd, unsigned char status, uint32_t size)
     return send_all(fd, response, sizeof(response));
 }
 
-static int serve_get(int connection, unsigned char file_id)
+static int serve_get(int connection, unsigned char file_id, uint32_t maximum_size)
 {
     char path[192];
     struct stat info;
@@ -220,7 +230,7 @@ static int serve_get(int connection, unsigned char file_id)
     if (fd < 0)
         return send_response(connection, errno == ENOENT ? BRIDGE_NOT_FOUND : BRIDGE_IO_ERROR, 0);
     if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0 ||
-        (uint64_t)info.st_size > BRIDGE_MAX_FILE)
+        (uint64_t)info.st_size > maximum_size)
     {
         close(fd);
         return send_response(connection, BRIDGE_IO_ERROR, 0);
@@ -303,9 +313,14 @@ static int serve_bridge_request(int connection, int *stop_requested, int *aux_li
     if (operation == BRIDGE_PING && file_id == 0 && size == 0)
         return send_response(connection, BRIDGE_OK, 0);
     if (operation == BRIDGE_GET && size == 0)
-        return serve_get(connection, file_id);
+        return serve_get(connection, file_id, BRIDGE_MAX_FILE);
     if (operation == BRIDGE_PUT)
         return serve_put(connection, file_id, size);
+    if (operation == BRIDGE_GET_AUX_BUFFER && file_id == 0 && size == 0)
+        return serve_get(connection, 6U, AUX_MAX_STORAGE);
+    if (operation == BRIDGE_PUT_AUX_BUFFER && file_id == 0 &&
+        size >= AUX_ENVELOPE_HEADER_BYTES && size <= AUX_MAX_STORAGE)
+        return serve_put(connection, 6U, size);
     if (operation == BRIDGE_STATUS && file_id == 0 && size == 0)
     {
         const unsigned char flags = g_aux_ready ? 1U : 0U;
@@ -505,17 +520,67 @@ static int parse_content_length(const char *headers, size_t header_size, size_t 
     return 1;
 }
 
+static int parse_aux_format(const char *headers, size_t header_size, unsigned char *format)
+{
+    if (headers == NULL || format == NULL || header_size < 4U)
+        return -1;
+    *format = AUX_FORMAT_AUTO;
+    const char *line = strstr(headers, "\r\n");
+    if (line == NULL)
+        return -1;
+    line += 2;
+    const char *limit = headers + header_size;
+    int found = 0;
+    while (line < limit && line[0] != '\r' && line[1] != '\n')
+    {
+        const char *end = strstr(line, "\r\n");
+        if (end == NULL || end > limit)
+            return -1;
+        const char *colon = memchr(line, ':', (size_t)(end - line));
+        if (colon != NULL && header_name_is(line, (size_t)(colon - line), "X-Playlist-Format"))
+        {
+            if (found)
+                return -1;
+            const char *value = colon + 1;
+            while (value < end && (*value == ' ' || *value == '\t'))
+                ++value;
+            size_t value_size = (size_t)(end - value);
+            while (value_size > 0U && (value[value_size - 1U] == ' ' ||
+                                       value[value_size - 1U] == '\t'))
+                --value_size;
+            if (value_size == 3U && strncasecmp(value, "m3u", value_size) == 0)
+                *format = AUX_FORMAT_M3U;
+            else if (value_size == 4U && strncasecmp(value, "m3u8", value_size) == 0)
+                *format = AUX_FORMAT_M3U8;
+            else if (value_size == 3U && strncasecmp(value, "pls", value_size) == 0)
+                *format = AUX_FORMAT_PLS;
+            else if (value_size == 4U && strncasecmp(value, "xspf", value_size) == 0)
+                *format = AUX_FORMAT_XSPF;
+            else if (value_size == 3U && strncasecmp(value, "asx", value_size) == 0)
+                *format = AUX_FORMAT_ASX;
+            else
+                return -1;
+            found = 1;
+        }
+        line = end + 2;
+    }
+    return 0;
+}
+
 static int aux_store_list(int connection, char *request, size_t received, size_t header_size)
 {
     if (strncmp(request, "POST /list ", 11) != 0)
         return aux_send_text(connection, "404 Not Found", "Ruta no encontrada");
 
     size_t body_size = 0;
+    unsigned char format = AUX_FORMAT_AUTO;
     const int length_result = parse_content_length(request, header_size, &body_size);
     if (length_result == 1)
         return aux_send_text(connection, "411 Length Required", "Falta Content-Length");
     if (length_result != 0 || body_size == 0)
         return aux_send_text(connection, "400 Bad Request", "Longitud de lista invalida o vacia");
+    if (parse_aux_format(request, header_size, &format) != 0)
+        return aux_send_text(connection, "400 Bad Request", "Formato de lista no compatible");
 
     size_t initial_body = received - header_size;
     if (initial_body > body_size)
@@ -529,7 +594,11 @@ static int aux_store_list(int connection, char *request, size_t received, size_t
     if (output < 0)
         return aux_send_text(connection, "500 Internal Server Error", "No se pudo crear la lista");
 
-    int ok = initial_body == 0 || write_all(output, request + header_size, initial_body) == 0;
+    static const unsigned char envelope_magic[8] = {'P', 'R', 'A', 'U', 'X', '0', '1', '\n'};
+    const unsigned char envelope_format = format;
+    int ok = write_all(output, envelope_magic, sizeof(envelope_magic)) == 0 &&
+             write_all(output, &envelope_format, sizeof(envelope_format)) == 0 &&
+             (initial_body == 0 || write_all(output, request + header_size, initial_body) == 0);
     size_t remaining = body_size - initial_body;
     char buffer[BRIDGE_CHUNK];
     while (ok && remaining > 0)
@@ -557,7 +626,8 @@ static int aux_store_list(int connection, char *request, size_t received, size_t
         return aux_send_text(connection, "400 Bad Request",
                              "Carga incompleta; se conserva la lista anterior");
     }
-    report("AUX M3U stored bytes=%lu", (unsigned long)body_size);
+    report("AUX playlist stored in /data/radio bytes=%lu format=%u",
+           (unsigned long)body_size, (unsigned)format);
     return aux_send_text(connection, "201 Created", "Lista recibida; pulsa BARRIDO");
 }
 
@@ -578,7 +648,7 @@ static void handle_aux_client(int connection)
         ".back{position:relative;overflow:hidden;padding:22px clamp(18px,4vw,42px) 28px;border:1px solid #a7adb0;border-radius:9px;"
         "background:repeating-linear-gradient(180deg,#737b80 0,#6b747a 2px,#626b71 4px,#70787e 7px);box-shadow:inset 0 1px 0 #e2e0d9,inset 0 -8px 20px #202326}"
         ".top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:0 0 14px;border-bottom:1px solid #3c4246}"
-        ".brand{margin:0;color:#f0eee8;font-size:clamp(22px,4vw,32px);letter-spacing:.1em;text-shadow:0 1px 2px #000}.model{color:#30383c;font-size:12px;letter-spacing:.14em;text-transform:uppercase}"
+        ".brand{margin:0;color:#f0eee8;font-size:clamp(22px,4vw,32px);letter-spacing:.1em;text-shadow:0 1px 2px #000}.model{color:#f0eee8;font-size:12px;letter-spacing:.14em;text-transform:uppercase;text-shadow:0 1px 2px #202326}"
         ".vent{height:17px;margin:14px 0 20px;border:1px solid #33393d;border-radius:3px;background:repeating-linear-gradient(90deg,#1f2427 0,#1f2427 3px,#92999b 4px,#92999b 5px);box-shadow:inset 0 2px 5px #000}"
         ".layout{display:grid;grid-template-columns:minmax(250px,.8fr) minmax(360px,1.4fr);gap:18px;align-items:stretch}"
         ".ports,.import{border:1px solid #3b4247;border-radius:6px;background:linear-gradient(145deg,#596269,#424a50);box-shadow:inset 0 1px 0 #aeb4b4,0 3px 8px #0005}"
@@ -603,17 +673,19 @@ static void handle_aux_client(int connection)
         "<div class='rca'><span class='socket white'></span><span><b>L · LEFT</b><small>AUX IN</small></span></div>"
         "<div class='rca'><span class='socket red'></span><span><b>R · RIGHT</b><small>AUX IN</small></span></div></div>"
         "<div class='jack'><span class='jack-dot'></span><span>3.5 mm · LINE INPUT</span></div><p class='note'>Entradas ilustradas del equipo. La importación de emisoras se realiza por la red local.</p></section>"
-        "<section class='import'><div class='aux-id'>AUX / NETWORK BRIDGE · 7000</div><h2>Importar lista de emisoras</h2><p>Selecciona una lista M3U; la radio la recibirá y podrás explorarla en BARRIDO.</p>"
-        "<label class='upload' for='file'><input id='file' type='file' accept='.m3u,.m3u8,audio/x-mpegurl,application/vnd.apple.mpegurl,text/plain'><b>SELECCIONAR ARCHIVO .M3U</b><span>Buscar en este dispositivo</span></label>"
-        "<div id='file-state' class='file-state'>Ningún archivo seleccionado</div><details><summary class='paste'>O pegar el contenido M3U</summary>"
-        "<textarea id='text' spellcheck='false' placeholder='#EXTM3U&#10;#EXTINF:-1,Nombre de la emisora&#10;https://servidor/stream'></textarea></details>"
+        "<section class='import'><div class='aux-id'>AUX / NETWORK BRIDGE · 7000</div><h2>Importar lista de emisoras</h2><p>Formatos M3U, M3U8, PLS, XSPF y ASX; después explora la lista en BARRIDO.</p>"
+        "<label class='upload' for='file'><input id='file' type='file' accept='.m3u,.m3u8,.pls,.xspf,.asx'><b>SELECCIONAR LISTA DE EMISORAS</b><span>Admite M3U · M3U8 · PLS · XSPF · ASX</span></label>"
+        "<div id='file-state' class='file-state'>Ningún archivo seleccionado</div><details><summary class='paste'>O pegar el contenido de una lista</summary>"
+        "<textarea id='text' spellcheck='false' placeholder='Pega el contenido M3U, PLS, XSPF o ASX'></textarea></details>"
         "<div class='actions'><button id='send' type='button'>ENVIAR A PROSPERO RADIO</button><span id='status' class='status' role='status' aria-live='polite'></span></div></section></div></section></main>"
-        "<script>(()=>{const file=document.querySelector('#file'),text=document.querySelector('#text'),label=document.querySelector('#file-state'),status=document.querySelector('#status'),button=document.querySelector('#send');"
-        "file.addEventListener('change',async()=>{const f=file.files&&file.files[0];if(!f){label.textContent='Ningún archivo seleccionado';return}"
-        "try{const body=await f.text(),urls=body.split(/\\r?\\n/).filter(x=>/^\\s*https?:\\/\\//i.test(x)).length;label.textContent=f.name+' · '+(urls?urls+' URL(s) detectadas':'sin URLs HTTP(S)');status.textContent=''}catch(e){label.textContent='No se pudo leer el archivo'}});"
-        "button.addEventListener('click',async()=>{const f=file.files&&file.files[0];let body='';try{body=f?await f.text():text.value}catch(e){status.className='status error';status.textContent='No se pudo leer el archivo';return}"
-        "const urls=body.split(/\\r?\\n/).filter(x=>/^\\s*https?:\\/\\//i.test(x)).length;if(!urls){status.className='status error';status.textContent='No hay URLs HTTP o HTTPS en la lista';return}"
-        "button.disabled=true;status.className='status';status.textContent='Enviando '+urls+' URL(s)…';try{const r=await fetch('/list',{method:'POST',headers:{'Content-Type':'audio/x-mpegurl'},body});const answer=await r.text();"
+        "<script>(()=>{const file=document.querySelector('#file'),text=document.querySelector('#text'),label=document.querySelector('#file-state'),status=document.querySelector('#status'),button=document.querySelector('#send'),supported=['m3u','m3u8','pls','xspf','asx'];"
+        "const guess=s=>{const v=s.toLowerCase();return v.includes('<asx')?'asx':(v.includes('xspf.org/ns')||v.includes('<tracklist'))?'xspf':(v.includes('[playlist]')||v.includes('file1='))?'pls':v.includes('#extm3u')?'m3u8':'m3u'};"
+        "file.addEventListener('change',()=>{const f=file.files&&file.files[0];if(!f){label.textContent='Ningún archivo seleccionado';return}const ext=f.name.toLowerCase().split('.').pop();"
+        "label.textContent=f.name+' · '+Math.ceil(f.size/1024)+' KB'+(supported.includes(ext)?'':' · extensión no compatible');status.textContent=''});"
+        "button.addEventListener('click',async()=>{const f=file.files&&file.files[0];let body,format='auto';try{if(f){format=f.name.toLowerCase().split('.').pop();if(!supported.includes(format))throw new Error('format');body=await f.arrayBuffer()}"
+        "else{const value=text.value;if(!value.trim()){status.className='status error';status.textContent='Selecciona un archivo o pega el contenido';return}format=guess(value);body=new TextEncoder().encode(value).buffer}}catch(e){status.className='status error';status.textContent='Formato o archivo no compatible';return}"
+        "if(!body.byteLength){status.className='status error';status.textContent='La lista está vacía';return}"
+        "button.disabled=true;status.className='status';status.textContent='Enviando lista '+format.toUpperCase()+'…';try{const r=await fetch('/list',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-Playlist-Format':format},body});const answer=await r.text();"
         "status.className=r.ok?'status ok':'status error';status.textContent=r.ok?answer:('Error '+r.status+': '+answer)}catch(e){status.className='status error';status.textContent='No se pudo conectar con la consola'}finally{button.disabled=false}})})();</script></body></html>";
     char request[8193];
     size_t received = 0;

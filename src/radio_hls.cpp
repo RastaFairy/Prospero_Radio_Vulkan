@@ -77,6 +77,16 @@ static bool starts_case(hls_slice_t value, const char *text)
     return true;
 }
 
+/* Ad-insertion markers describe splice points or SCTE-35 metadata. They do
+ * not change the media bytes, so the audio-only client can safely ignore them
+ * while still rejecting transport features it cannot decode. */
+static bool hls_ad_marker_metadata(hls_slice_t line)
+{
+    return starts(line, "#EXT-X-DATERANGE:") || starts(line, "#EXT-X-CUE-OUT") ||
+           starts(line, "#EXT-X-CUE-IN") || starts(line, "#EXT-X-SCTE35:") ||
+           starts(line, "#EXT-X-ASSET:");
+}
+
 static bool tag_value(hls_slice_t line, const char *tag, hls_slice_t *value)
 {
     if (!starts(line, tag))
@@ -103,6 +113,33 @@ static bool parse_u64(hls_slice_t value, uint64_t *output)
         result = result * 10U + digit;
     }
     *output = result;
+    return true;
+}
+
+static int hex_digit(char value)
+{
+    if (value >= '0' && value <= '9')
+        return value - '0';
+    if (value >= 'a' && value <= 'f')
+        return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F')
+        return value - 'A' + 10;
+    return -1;
+}
+
+static bool parse_iv(hls_slice_t value, uint8_t output[16])
+{
+    if (value.size != 34U || value.data[0] != '0' ||
+        (value.data[1] != 'x' && value.data[1] != 'X'))
+        return false;
+    for (unsigned i = 0U; i < 16U; ++i)
+    {
+        const int high = hex_digit(value.data[2U + i * 2U]);
+        const int low = hex_digit(value.data[3U + i * 2U]);
+        if (high < 0 || low < 0)
+            return false;
+        output[i] = (uint8_t)((high << 4) | low);
+    }
     return true;
 }
 
@@ -224,6 +261,10 @@ radio_hls_result_t radio_hls_parse(const char *data, size_t size, const char *pl
     uint64_t sequence = 0;
     uint64_t variant_bandwidth = 0;
     uint32_t variant_source_channels = 0U;
+    bool key_active = false;
+    bool key_iv_present = false;
+    char active_key_url[RADIO_HLS_URL_BYTES] = {};
+    uint8_t active_iv[16] = {};
 
     size_t position = 0;
     while (position < size)
@@ -298,8 +339,39 @@ radio_hls_result_t radio_hls_parse(const char *data, size_t size, const char *pl
         else if (tag_value(line, "#EXT-X-KEY:", &value))
         {
             hls_slice_t method;
-            if (!attribute(value, "METHOD", &method) || !equal_case(method, "NONE"))
+            if (!attribute(value, "METHOD", &method))
                 return RADIO_HLS_UNSUPPORTED;
+            if (equal_case(method, "NONE"))
+            {
+                key_active = false;
+                key_iv_present = false;
+                memset(active_key_url, 0, sizeof(active_key_url));
+                memset(active_iv, 0, sizeof(active_iv));
+            }
+            else if (equal_case(method, "AES-128"))
+            {
+                hls_slice_t key_format;
+                hls_slice_t key_reference;
+                hls_slice_t iv;
+                uint8_t parsed_iv[16] = {};
+                const bool has_format = attribute(value, "KEYFORMAT", &key_format);
+                const bool has_iv = attribute(value, "IV", &iv);
+                if ((has_format && !equal_case(key_format, "identity")) ||
+                    !attribute(value, "URI", &key_reference) ||
+                    (has_iv && !parse_iv(iv, parsed_iv)))
+                    return RADIO_HLS_UNSUPPORTED;
+                const radio_hls_result_t resolved =
+                    resolve(key_reference, playlist_url, active_key_url, sizeof(active_key_url));
+                if (resolved != RADIO_HLS_OK)
+                    return resolved;
+                key_active = true;
+                key_iv_present = has_iv;
+                memcpy(active_iv, parsed_iv, sizeof(active_iv));
+            }
+            else
+            {
+                return RADIO_HLS_UNSUPPORTED;
+            }
         }
         else if (tag_value(line, "#EXT-X-DISCONTINUITY-SEQUENCE:", &value))
         {
@@ -314,7 +386,8 @@ radio_hls_result_t radio_hls_parse(const char *data, size_t size, const char *pl
         {
             return RADIO_HLS_UNSUPPORTED;
         }
-        else if (starts(line, "#EXT-X-") && !starts(line, "#EXT-X-VERSION:") &&
+        else if (starts(line, "#EXT-X-") && !hls_ad_marker_metadata(line) &&
+                 !starts(line, "#EXT-X-VERSION:") &&
                  !starts(line, "#EXT-X-PROGRAM-DATE-TIME:") &&
                  !starts(line, "#EXT-X-PLAYLIST-TYPE:") && !starts(line, "#EXT-X-ALLOW-CACHE:") &&
                  !starts(line, "#EXT-X-START:") && !starts(line, "#EXT-X-SESSION-DATA:") &&
@@ -346,6 +419,12 @@ radio_hls_result_t radio_hls_parse(const char *data, size_t size, const char *pl
                 radio_hls_segment_t *segment = &playlist->segments[playlist->segment_count++];
                 segment->sequence = sequence++;
                 segment->discontinuity = discontinuity ? 1U : 0U;
+                segment->encrypted = key_active ? 1U : 0U;
+                segment->iv_present = key_iv_present ? 1U : 0U;
+                if (key_active)
+                    memcpy(segment->key_url, active_key_url, strlen(active_key_url) + 1U);
+                if (key_iv_present)
+                    memcpy(segment->iv, active_iv, sizeof(segment->iv));
                 discontinuity = false;
                 const radio_hls_result_t result =
                     resolve(line, playlist_url, segment->url, sizeof(segment->url));

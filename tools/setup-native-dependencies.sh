@@ -80,8 +80,13 @@ if [[ -z $zlib_library || ! -f $zlib_root/usr/include/zlib.h ||
         cd "$zlib_source"
         CC="$compiler" AR="$archiver" RANLIB="$ranlib" ./configure --static --prefix=/usr
         make -j "$jobs" CC="$compiler" AR="$archiver" RANLIB="$ranlib"
-        make DESTDIR="$zlib_root" install
     ) >"$zlib_directory/build.log"
+    # WSL's /mnt/<drive> does not implement chmod or timestamp preservation.
+    # The PS5 build only consumes these three zlib artifacts, so stage them
+    # without make install's cp -p/chmod operations.
+    mkdir -p "$zlib_root/usr/include" "$zlib_root/usr/lib"
+    cp "$zlib_source/zlib.h" "$zlib_source/zconf.h" "$zlib_root/usr/include/"
+    cp "$zlib_source/libz.a" "$zlib_root/usr/lib/"
     printf '%s\n' "$zlib_version" >"$zlib_stamp"
     zlib_library=$(find "$zlib_root" -type f -name libz.a -print -quit 2>/dev/null || true)
 fi

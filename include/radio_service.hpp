@@ -118,6 +118,7 @@ int radio_service_eq_preset(void); /* -1 when the current band gains are custom 
 void radio_service_aux_start(void);
 bool radio_service_aux_running(void);
 int radio_service_aux_stations(void);
+void radio_service_aux_stations_set(int count);
 bool radio_service_toggle_favorite(unsigned station_index);
 bool radio_service_refresh(void);
 bool radio_service_search(const radio_catalog_query_t *query);

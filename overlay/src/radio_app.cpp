@@ -7,7 +7,7 @@
 // imitates: the D-pad is the finger that moves across the buttons, Cross
 // presses them, the right dial tunes and the left dial is volume. The smoked
 // glass shows exactly one surface: now playing, a station list, genres,
-// search or settings.
+// search, AUX or EQ.
 
 #include "radio_app.hpp"
 #include "radio_ime.hpp"
@@ -20,11 +20,15 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <climits>
 #include <cstdio>
 #include <cstdlib>
-#include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
+#include <string_view>
+#include <unordered_set>
+#include <utility>
 #include <strings.h>
 
 extern "C" uint64_t SDL_GetTicks64(void);
@@ -41,6 +45,7 @@ constexpr std::uint32_t kPresetFileVersion = 3;
 constexpr char kAuxFavoriteFileMagic[8] = {'P', 'R', 'A', 'U', 'X', 'F', '0', '1'};
 constexpr std::uint32_t kAuxFavoriteFileVersion = 1;
 constexpr unsigned kAuxMaxStations = 4096;
+constexpr unsigned long long kAuxDeleteHoldMs = 3000ULL;
 
 struct PresetFileV2
 {
@@ -290,8 +295,17 @@ void MakeAuxStation(const char *url, const char *extinf, radio_station_t *statio
         CopyString(station->codec, sizeof(station->codec), "HLS");
         station->hls = 1;
     }
+    else if (url_length >= 5U &&
+             [&]()
+             {
+                 for (std::size_t i = 0; i + 5U <= url_length; ++i)
+                     if (strncasecmp(url + i, "/mp3/", 5U) == 0)
+                         return true;
+                 return false;
+             }())
+        CopyString(station->codec, sizeof(station->codec), "MP3");
     else
-        CopyString(station->codec, sizeof(station->codec), "STREAM");
+        CopyString(station->codec, sizeof(station->codec), "AUTO");
 
     std::uint64_t hash = UINT64_C(14695981039346656037);
     for (const unsigned char *byte = reinterpret_cast<const unsigned char *>(url); *byte; ++byte)
@@ -301,6 +315,249 @@ void MakeAuxStation(const char *url, const char *extinf, radio_station_t *statio
     }
     std::snprintf(station->uuid, sizeof(station->uuid), "M3U-%016llX",
                   static_cast<unsigned long long>(hash));
+}
+
+std::size_t FindCi(std::string_view text, std::string_view needle, std::size_t start = 0)
+{
+    if (needle.empty() || needle.size() > text.size())
+        return std::string_view::npos;
+    for (std::size_t at = start; at + needle.size() <= text.size(); ++at)
+    {
+        std::size_t matched = 0;
+        while (matched < needle.size() &&
+               std::tolower(static_cast<unsigned char>(text[at + matched])) ==
+                   std::tolower(static_cast<unsigned char>(needle[matched])))
+            ++matched;
+        if (matched == needle.size())
+            return at;
+    }
+    return std::string_view::npos;
+}
+
+std::string_view TrimView(std::string_view value)
+{
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front())))
+        value.remove_prefix(1);
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back())))
+        value.remove_suffix(1);
+    return value;
+}
+
+void AppendUtf8(std::string &output, unsigned codepoint)
+{
+    if (codepoint <= 0x7fU)
+        output.push_back(static_cast<char>(codepoint));
+    else if (codepoint <= 0x7ffU)
+    {
+        output.push_back(static_cast<char>(0xc0U | (codepoint >> 6)));
+        output.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+    }
+    else if (codepoint <= 0xffffU && (codepoint < 0xd800U || codepoint > 0xdfffU))
+    {
+        output.push_back(static_cast<char>(0xe0U | (codepoint >> 12)));
+        output.push_back(static_cast<char>(0x80U | ((codepoint >> 6) & 0x3fU)));
+        output.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+    }
+    else if (codepoint <= 0x10ffffU)
+    {
+        output.push_back(static_cast<char>(0xf0U | (codepoint >> 18)));
+        output.push_back(static_cast<char>(0x80U | ((codepoint >> 12) & 0x3fU)));
+        output.push_back(static_cast<char>(0x80U | ((codepoint >> 6) & 0x3fU)));
+        output.push_back(static_cast<char>(0x80U | (codepoint & 0x3fU)));
+    }
+}
+
+bool IsValidUtf8(std::string_view value)
+{
+    for (std::size_t at = 0U; at < value.size();)
+    {
+        const unsigned char first = static_cast<unsigned char>(value[at]);
+        if (first <= 0x7fU)
+        {
+            ++at;
+            continue;
+        }
+        unsigned continuation = 0U;
+        unsigned codepoint = 0U;
+        unsigned minimum = 0U;
+        if ((first & 0xe0U) == 0xc0U)
+        {
+            continuation = 1U;
+            codepoint = first & 0x1fU;
+            minimum = 0x80U;
+        }
+        else if ((first & 0xf0U) == 0xe0U)
+        {
+            continuation = 2U;
+            codepoint = first & 0x0fU;
+            minimum = 0x800U;
+        }
+        else if ((first & 0xf8U) == 0xf0U)
+        {
+            continuation = 3U;
+            codepoint = first & 0x07U;
+            minimum = 0x10000U;
+        }
+        else
+            return false;
+        if (continuation > value.size() - at - 1U)
+            return false;
+        for (unsigned i = 1U; i <= continuation; ++i)
+        {
+            const unsigned char next = static_cast<unsigned char>(value[at + i]);
+            if ((next & 0xc0U) != 0x80U)
+                return false;
+            codepoint = (codepoint << 6U) | (next & 0x3fU);
+        }
+        if (codepoint < minimum || codepoint > 0x10ffffU ||
+            (codepoint >= 0xd800U && codepoint <= 0xdfffU))
+            return false;
+        at += continuation + 1U;
+    }
+    return true;
+}
+
+std::string DecodeWindows1252(std::string_view value)
+{
+    static const unsigned codepoints[32] = {
+        0x20acU, 0xfffdU, 0x201aU, 0x0192U, 0x201eU, 0x2026U, 0x2020U, 0x2021U,
+        0x02c6U, 0x2030U, 0x0160U, 0x2039U, 0x0152U, 0xfffdU, 0x017dU, 0xfffdU,
+        0xfffdU, 0x2018U, 0x2019U, 0x201cU, 0x201dU, 0x2022U, 0x2013U, 0x2014U,
+        0x02dcU, 0x2122U, 0x0161U, 0x203aU, 0x0153U, 0xfffdU, 0x017eU, 0x0178U};
+    std::string decoded;
+    decoded.reserve(value.size() * 2U);
+    for (unsigned char byte : value)
+    {
+        if (byte < 0x80U)
+            decoded.push_back(static_cast<char>(byte));
+        else if (byte < 0xa0U)
+            AppendUtf8(decoded, codepoints[byte - 0x80U]);
+        else
+            AppendUtf8(decoded, byte);
+    }
+    return decoded;
+}
+
+bool DecodeXml(std::string_view value, std::string &output)
+{
+    output.clear();
+    output.reserve(value.size());
+    for (std::size_t at = 0; at < value.size();)
+    {
+        if (value[at] != '&')
+        {
+            output.push_back(value[at++]);
+            continue;
+        }
+        const std::size_t end = value.find(';', at + 1U);
+        if (end == std::string_view::npos || end - at > 12U)
+            return false;
+        const std::string_view entity = value.substr(at + 1U, end - at - 1U);
+        if (entity == "amp")
+            output.push_back('&');
+        else if (entity == "lt")
+            output.push_back('<');
+        else if (entity == "gt")
+            output.push_back('>');
+        else if (entity == "quot")
+            output.push_back('"');
+        else if (entity == "apos")
+            output.push_back('\'');
+        else if (!entity.empty() && entity.front() == '#')
+        {
+            unsigned base = 10U;
+            std::size_t digit = 1U;
+            if (digit < entity.size() && (entity[digit] == 'x' || entity[digit] == 'X'))
+            {
+                base = 16U;
+                ++digit;
+            }
+            unsigned codepoint = 0U;
+            if (digit == entity.size())
+                return false;
+            for (; digit < entity.size(); ++digit)
+            {
+                const char c = entity[digit];
+                const unsigned value_digit = c >= '0' && c <= '9' ? (unsigned)(c - '0')
+                                            : base == 16U && c >= 'a' && c <= 'f'
+                                                ? (unsigned)(c - 'a' + 10)
+                                            : base == 16U && c >= 'A' && c <= 'F'
+                                                ? (unsigned)(c - 'A' + 10)
+                                                : base;
+                if (value_digit >= base || codepoint > (0x10ffffU - value_digit) / base)
+                    return false;
+                codepoint = codepoint * base + value_digit;
+            }
+            AppendUtf8(output, codepoint);
+        }
+        else
+            return false;
+        at = end + 1U;
+    }
+    return true;
+}
+
+bool XmlTagContent(std::string_view block, const char *tag, std::string &output)
+{
+    std::string opening = "<";
+    opening += tag;
+    const std::size_t start = FindCi(block, opening);
+    if (start == std::string_view::npos)
+        return false;
+    const std::size_t name_end = start + opening.size();
+    if (name_end < block.size() && block[name_end] != '>' &&
+        !std::isspace(static_cast<unsigned char>(block[name_end])))
+        return false;
+    const std::size_t content_start = block.find('>', name_end);
+    if (content_start == std::string_view::npos)
+        return false;
+    std::string closing = "</";
+    closing += tag;
+    const std::size_t end = FindCi(block, closing, content_start + 1U);
+    if (end == std::string_view::npos)
+        return false;
+    const std::string_view content = TrimView(block.substr(content_start + 1U,
+                                                            end - content_start - 1U));
+    return DecodeXml(content, output);
+}
+
+bool XmlAttribute(std::string_view tag, const char *name, std::string &output)
+{
+    const std::size_t name_pos = FindCi(tag, name);
+    if (name_pos == std::string_view::npos)
+        return false;
+    const std::size_t after_name = name_pos + std::strlen(name);
+    if (after_name < tag.size() && tag[after_name] != '=' &&
+        !std::isspace(static_cast<unsigned char>(tag[after_name])))
+        return false;
+    std::size_t equals = after_name;
+    while (equals < tag.size() && std::isspace(static_cast<unsigned char>(tag[equals])))
+        ++equals;
+    if (equals >= tag.size() || tag[equals] != '=')
+        return false;
+    ++equals;
+    while (equals < tag.size() && std::isspace(static_cast<unsigned char>(tag[equals])))
+        ++equals;
+    if (equals >= tag.size() || (tag[equals] != '\'' && tag[equals] != '"'))
+        return false;
+    const char quote = tag[equals++];
+    const std::size_t end = tag.find(quote, equals);
+    return end != std::string_view::npos &&
+           DecodeXml(tag.substr(equals, end - equals), output);
+}
+
+void AddAuxStation(std::vector<radio_station_t> &stations, const std::string &url,
+                   std::string extinf)
+{
+    if (stations.size() >= kAuxMaxStations || url.size() >= 512U ||
+        !IsHttpUrl(url.c_str()) || url.find_first_of(" \t\r\n") != std::string::npos)
+        return;
+    for (char &character : extinf)
+        if (character == '\r' || character == '\n')
+            character = ' ';
+    radio_station_t station{};
+    MakeAuxStation(url.c_str(), extinf.c_str(), &station);
+    stations.push_back(station);
 }
 
 const radio_facet_t *FindFacet(const std::vector<radio_facet_t> &facets, const char *value)
@@ -334,33 +591,20 @@ bool RadioApp::Initialize(Rml::ElementDocument *document)
     LoadAuxFavorites();
     radio_service_init();
     service_started_ = true;
+    if (payload_ready)
+        (void)FetchAuxPlaylist();
     RebuildFacets();
     genre_total_ = static_cast<unsigned>(genre_facets_.size());
     ApplyVolumeFrame();
     ApplyTunerFrame();
-    {
-        std::FILE *f = std::fopen("/download0/radio-eq.txt", "rb");
-        if (f)
-        {
-            for (int b = 0; b < 5; ++b)
-            {
-                int gain = 0;
-                if (std::fscanf(f, "%d", &gain) != 1)
-                    break;
-                radio_service_eq_set_gain(b, gain);
-            }
-            std::fclose(f);
-        }
-    }
+    LoadEq();
     ApplyButtons();
     BuildList();
     LoadPresets();
     ApplyPresetIndicators();
-    RefreshHeadphoneState();
     RefreshHome();
     RefreshList();
     RefreshGenres();
-    RefreshSettings();
     eq_preset_ = radio_service_eq_preset();
     RefreshEq();
     return true;
@@ -420,7 +664,6 @@ void RadioApp::ShowScreen()
     SetVisible(document_, "screen-home", mode_ == Mode::Home);
     SetVisible(document_, "screen-list", mode_ == Mode::List);
     SetVisible(document_, "screen-genres", mode_ == Mode::Genres);
-    SetVisible(document_, "settings-panel", false);
     SetVisible(document_, "search-panel", false);
     SetVisible(document_, "screen-aux", mode_ == Mode::Aux);
     SetVisible(document_, "screen-barrido", mode_ == Mode::Barrido);
@@ -485,8 +728,7 @@ void RadioApp::PressButton(unsigned index)
         /* Import the durable AUX playlist before showing the source cycle.
          * This lets RADIO -> LEFT/RIGHT reach M3U directly after an upload or
          * application restart, without requiring the separate BARRIDO screen. */
-        if (radio_payload_bridge_fetch_aux())
-            (void)ScanAuxPlaylist();
+        (void)FetchAuxPlaylist();
         mode_ = Mode::List;
         list_kind_ = ListKind::Radio;
         list_start_ = list_cursor_ = 0;
@@ -495,8 +737,7 @@ void RadioApp::PressButton(unsigned index)
         ApplyButtons();
         break;
     case 2: // FAVORITES
-        if (radio_payload_bridge_fetch_aux())
-            (void)ScanAuxPlaylist();
+        (void)FetchAuxPlaylist();
         mode_ = Mode::List;
         list_kind_ = ListKind::Favorites;
         list_start_ = list_cursor_ = 0;
@@ -513,22 +754,22 @@ void RadioApp::PressButton(unsigned index)
     case 4: // BARRIDO — revisa la lista subida desde AUX
         mode_ = Mode::Barrido;
         {
-            const bool fetched = radio_payload_bridge_fetch_aux();
-            const unsigned stations = fetched ? ScanAuxPlaylist() : 0U;
+            const bool fetched = FetchAuxPlaylist();
+            const unsigned stations = static_cast<unsigned>(aux_stations_.size());
             char message[112];
-            if (fetched && stations > 0)
-                std::snprintf(message, sizeof(message), "M3U LISTA | %u EMISORAS | CROSS: ABRIR", stations);
+            if (stations > 0)
+                std::snprintf(message, sizeof(message), "AUX LISTA | %u EMISORAS | CROSS: ABRIR", stations);
             else if (fetched)
-                CopyString(message, sizeof(message), "M3U RECIBIDA, PERO NO CONTIENE URLS HTTP VALIDAS");
+                CopyString(message, sizeof(message), "LISTA RECIBIDA, PERO SIN URLS HTTP VALIDAS");
             else
-                CopyString(message, sizeof(message), "SIN M3U EN /DATA/RADIO - ENTRA POR AUX");
+                CopyString(message, sizeof(message), "SIN LISTA AUX - ENTRA POR AUX");
             SetText(document_, "barrido-status", message);
             std::fprintf(stderr, "[ProsperoRadio][AUX] BARRIDO fetch=%s parsed_entries=%u\n",
                          fetched ? "PASS" : "FAIL", stations);
         }
         ApplyButtons();
         break;
-    case 5: // EQ — superficie visible; DSP de bandas en v027
+    case 5: // EQ — 12 bandas graficas y faders independientes L/R
         mode_ = Mode::Eq;
         eq_preset_ = radio_service_eq_preset();
         RefreshEq();
@@ -566,8 +807,6 @@ void RadioApp::AdjustVolume(int direction)
         ApplyVolumeFrame();
         RefreshVolumeDisplay();
     }
-    if (mode_ == Mode::Settings)
-        RefreshSettings(false);
 }
 
 void RadioApp::TuneStation(int direction)
@@ -591,8 +830,6 @@ void RadioApp::TuneStation(int direction)
     if (PlaybackActive(status.playback_state))
         PlayIndex(tuned_index_);
     RefreshHome();
-    if (mode_ == Mode::Settings)
-        RefreshSettings(false);
 }
 
 void RadioApp::PlayIndex(unsigned index)
@@ -748,7 +985,7 @@ void RadioApp::RefreshList()
     else if (list_start_ + list_cursor_ >= list_total_)
         list_cursor_ = std::min(kListRows - 1U, list_total_ - list_start_ - 1U);
     const char *title = list_kind_ == ListKind::Favorites ? "FAVORITES"
-                        : list_kind_ == ListKind::Auxiliary ? "AUX M3U"
+                        : list_kind_ == ListKind::Auxiliary ? "AUX"
                                                             : "RADIO BROWSER";
     SetText(document_, "list-title", title);
     SetClass(document_, "list-tab-radio", "active", list_kind_ == ListKind::Radio);
@@ -767,19 +1004,28 @@ void RadioApp::RefreshList()
             char id[24];
             std::snprintf(id, sizeof(id), "list-row-%u", row);
             SetVisible(document_, id, false);
+            std::snprintf(id, sizeof(id), "list-delete-countdown-%u", row);
+            SetVisible(document_, id, false);
         }
         return;
     }
-    std::snprintf(text, sizeof(text), "%u / %u  |  ◀ ▶ FUENTE",
-                  list_start_ + list_cursor_ + 1U, list_total_);
+    if (list_kind_ == ListKind::Auxiliary)
+        std::snprintf(text, sizeof(text), "%u/%u | □ FAV · 3s BORRAR",
+                      list_start_ + list_cursor_ + 1U, list_total_);
+    else
+        std::snprintf(text, sizeof(text), "%u / %u  |  ◀ ▶ FUENTE",
+                      list_start_ + list_cursor_ + 1U, list_total_);
     SetText(document_, "list-status", text);
     for (unsigned row = 0; row < kListRows; ++row)
     {
         char id[24];
         std::snprintf(id, sizeof(id), "list-row-%u", row);
+        char countdown_id[40];
+        std::snprintf(countdown_id, sizeof(countdown_id), "list-delete-countdown-%u", row);
         if (list_start_ + row >= list_total_ || list_indices_[row] == kInvalidStation)
         {
             SetVisible(document_, id, false);
+            SetVisible(document_, countdown_id, false);
             continue;
         }
         SetVisible(document_, id, true);
@@ -799,6 +1045,7 @@ void RadioApp::RefreshList()
         if (!have_station)
         {
             SetVisible(document_, id, false);
+            SetVisible(document_, countdown_id, false);
             continue;
         }
         std::snprintf(id, sizeof(id), "list-name-%u", row);
@@ -809,16 +1056,34 @@ void RadioApp::RefreshList()
         char tag[40];
         FirstValue(station.tags, tag, sizeof(tag));
         if (list_aux_entries_[row])
-            std::snprintf(text, sizeof(text), "M3U  |  %.24s  |  %s", *tag ? tag : "Radio",
+            std::snprintf(text, sizeof(text), "AUX  |  %.24s  |  %s", *tag ? tag : "Radio",
                           station.codec);
         else
             std::snprintf(text, sizeof(text), "%s  |  %s %u kbps",
                           *station.country_code ? station.country_code : "WW", *tag ? tag : "Music",
                           station.bitrate);
         SetText(document_, id, text);
+        const bool show_delete_countdown = aux_delete_hold_active_ &&
+                                           list_kind_ == ListKind::Auxiliary &&
+                                           list_cursor_ == row &&
+                                           std::strcmp(station.uuid, aux_delete_hold_uuid_) == 0;
+        SetVisible(document_, countdown_id, show_delete_countdown);
+        if (show_delete_countdown)
+        {
+            const unsigned long long elapsed = radio_input_milliseconds() - aux_delete_hold_start_;
+            const unsigned long long remaining = elapsed >= kAuxDeleteHoldMs
+                                                     ? 0ULL
+                                                     : kAuxDeleteHoldMs - elapsed;
+            const double seconds = static_cast<double>((remaining + 99ULL) / 100ULL) / 10.0;
+            std::snprintf(text, sizeof(text), "BORRAR EN %.1f s · SUELTA CANCELA", seconds);
+            SetText(document_, countdown_id, text);
+        }
         std::snprintf(id, sizeof(id), "list-fav-%u", row);
-        SetVisible(document_, id, list_aux_entries_[row] ? IsAuxFavorite(station.uuid)
-                                                          : radio_service_is_favorite(station.uuid));
+        SetVisible(document_, id, !show_delete_countdown &&
+                                       (list_aux_entries_[row] ? IsAuxFavorite(station.uuid)
+                                                               : radio_service_is_favorite(station.uuid)));
+        std::snprintf(id, sizeof(id), "list-meta-%u", row);
+        SetVisible(document_, id, !show_delete_countdown);
         std::snprintf(id, sizeof(id), "list-row-%u", row);
         SetClass(document_, id, "cursor", list_cursor_ == row);
     }
@@ -929,85 +1194,6 @@ void RadioApp::RefreshStatus()
     SetClass(document_, "home-status", "error", error);
     const bool playing = status.playback_state == RADIO_PLAYBACK_PLAYING;
     SetClass(document_, "btn-play-pause", "playing", playing);
-}
-
-/* --- settings --------------------------------------------------------- */
-
-void RadioApp::RefreshSettings(bool refresh_favorites)
-{
-    const unsigned volume = radio_service_get_volume();
-    char text[96];
-    std::snprintf(text, sizeof(text), "%u%%", volume);
-    SetText(document_, "settings-volume-value", text);
-    SetPixelProperty(document_, "settings-volume-fill", "width",
-                     static_cast<int>((328U * volume) / 100U));
-    if (refresh_favorites)
-    {
-        std::snprintf(text, sizeof(text), "%u saved stations",
-                      radio_service_get_favorite_count());
-        SetText(document_, "settings-favorites-count", text);
-    }
-    radio_service_status_t status{};
-    radio_service_get_status(&status);
-    SetText(document_, "settings-refresh-state", status.refreshing ? "Updating..." : "Ready");
-    static const char *theme_names[] = {"Walnut", "Silver", "Graphite"};
-    SetText(document_, "settings-theme-value",
-            theme_names[theme_selected_ % (sizeof(theme_names) / sizeof(theme_names[0]))]);
-    SetClass(document_, "settings-theme-row", "focused", settings_focus_ == 0U);
-    SetClass(document_, "settings-favorites", "focused", settings_focus_ == 1U);
-    SetClass(document_, "settings-refresh", "focused", settings_focus_ == 2U);
-}
-
-void RadioApp::HandleSettingsKey(radio_input_key_t key)
-{
-    if (key == RADIO_INPUT_CIRCLE || key == RADIO_INPUT_TRIANGLE)
-    {
-        theme_selected_ = theme_index_; // cancel a pending selection
-        mode_ = Mode::Home;
-        settings_open_ = false;
-        ApplyButtons();
-        return;
-    }
-    if (key == RADIO_INPUT_LEFT || key == RADIO_INPUT_RIGHT)
-    {
-        if (settings_focus_ == 0U)
-            SelectTheme(key == RADIO_INPUT_LEFT ? -1 : 1);
-        RefreshSettings();
-        return;
-    }
-    if (key == RADIO_INPUT_UP || key == RADIO_INPUT_DOWN)
-    {
-        const int next = static_cast<int>(settings_focus_) + (key == RADIO_INPUT_DOWN ? 1 : -1);
-        settings_focus_ = static_cast<unsigned>((next + 3) % 3);
-        RefreshSettings();
-        return;
-    }
-    if (key != RADIO_INPUT_CROSS)
-        return;
-    if (settings_focus_ == 0U)
-    {
-        if (theme_selected_ != theme_index_)
-        {
-            theme_index_ = theme_selected_;
-            ApplyTheme();
-            SaveTheme();
-        }
-        RefreshSettings();
-        return;
-    }
-    if (settings_focus_ == 1U)
-    {
-        mode_ = Mode::List;
-        list_kind_ = ListKind::Favorites;
-        list_start_ = list_cursor_ = 0;
-        settings_open_ = false;
-        BuildList();
-        RefreshList();
-        ApplyButtons();
-        return;
-    }
-    radio_service_refresh();
-    RefreshSettings();
 }
 
 /* --- search ----------------------------------------------------------- */
@@ -1154,51 +1340,6 @@ void RadioApp::ImeResult(const char *text, void *user_data)
     app->UpdateSearch();
 }
 
-/* --- theme ------------------------------------------------------------ */
-
-void RadioApp::LoadTheme()
-{
-    std::FILE *file = std::fopen("/download0/radio-theme.txt", "rb");
-    if (file == nullptr)
-        return;
-    char buffer[8]{};
-    const std::size_t read = std::fread(buffer, 1, sizeof(buffer) - 1, file);
-    std::fclose(file);
-    if (read == 0)
-        return;
-    if (buffer[0] >= '0' && buffer[0] <= '2')
-        theme_index_ = buffer[0] - '0';
-}
-
-void RadioApp::SaveTheme() const
-{
-    std::FILE *file = std::fopen("/download0/radio-theme.txt", "wb");
-    if (file == nullptr)
-        return;
-    std::fprintf(file, "%d\n", theme_index_);
-    std::fclose(file);
-}
-
-void RadioApp::ApplyTheme()
-{
-    ApplyTheme(theme_index_);
-}
-
-void RadioApp::ApplyTheme(int index)
-{
-    /* Single Walnut/hybrid finish since 026: the silver/graphite backdrops are
-     * gone from the RML, so the theme switch is a no-op kept for the legacy
-     * call sites. The controls layer stays visible. */
-    (void)index;
-    SetClass(document_, "controls-layer", "hidden", false);
-}
-
-void RadioApp::SelectTheme(int direction)
-{
-    /* Left / right only move the picker; Cross applies and persists. */
-    theme_selected_ = (theme_selected_ + 3 + (direction > 0 ? 1 : -1)) % 3;
-}
-
 /* --- atlas frames ----------------------------------------------------- */
 
 void RadioApp::RefreshVolumeDisplay()
@@ -1285,14 +1426,37 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
         }
         return;
     }
+    if (event.key == RADIO_INPUT_SQUARE)
+    {
+        if (!event.pressed && aux_delete_hold_active_)
+        {
+            ReleaseAuxDeleteHold();
+            return;
+        }
+        if (event.pressed && mode_ == Mode::List && list_kind_ == ListKind::Auxiliary)
+        {
+            BeginAuxDeleteHold();
+            return;
+        }
+    }
     if (!event.pressed)
         return;
+    if (aux_delete_hold_active_)
+        CancelAuxDeleteHold();
     /* EQ takes the left dial first: it edits the selected band's gain. */
     if (mode_ == Mode::Eq &&
         (event.key == RADIO_INPUT_VOLUME_UP || event.key == RADIO_INPUT_VOLUME_DOWN))
     {
-        const int gain = radio_service_eq_gain(eq_sel_);
-        radio_service_eq_set_gain(eq_sel_, gain + (event.key == RADIO_INPUT_VOLUME_UP ? 1 : -1));
+        const int delta = event.key == RADIO_INPUT_VOLUME_UP ? 1 : -1;
+        if (eq_sel_ < 12)
+            radio_service_eq_set_gain(eq_sel_,
+                                      radio_service_eq_gain(eq_sel_) + delta);
+        else
+        {
+            const int channel = eq_sel_ - 12;
+            radio_service_eq_set_channel_gain(
+                channel, radio_service_eq_channel_gain(channel) + delta);
+        }
         SaveEq();
         RefreshEq();
         return;
@@ -1314,25 +1478,13 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
         }
         if (event.key == RADIO_INPUT_STATION_NEXT || event.key == RADIO_INPUT_RIGHT)
         {
-            eq_sel_ = (eq_sel_ + 1) % 5;
+            eq_sel_ = (eq_sel_ + 1) % 14;
             RefreshEq();
             return;
         }
         if (event.key == RADIO_INPUT_STATION_PREVIOUS || event.key == RADIO_INPUT_LEFT)
         {
-            eq_sel_ = (eq_sel_ + 4) % 5;
-            RefreshEq();
-            return;
-        }
-        if (event.key == RADIO_INPUT_VOLUME_UP)
-        {
-            radio_service_eq_set_gain(eq_sel_, radio_service_eq_gain(eq_sel_) + 1);
-            RefreshEq();
-            return;
-        }
-        if (event.key == RADIO_INPUT_VOLUME_DOWN)
-        {
-            radio_service_eq_set_gain(eq_sel_, radio_service_eq_gain(eq_sel_) - 1);
+            eq_sel_ = (eq_sel_ + 13) % 14;
             RefreshEq();
             return;
         }
@@ -1377,9 +1529,6 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
 
     switch (mode_)
     {
-    case Mode::Settings:
-        HandleSettingsKey(event.key);
-        return;
     case Mode::Search:
         HandleSearchKey(event.key);
         return;
@@ -1612,8 +1761,8 @@ void RadioApp::Poll()
             StorePreset(touch_zone_);
         }
     }
+    UpdateAuxDeleteHold();
     LightbarTick();
-    RefreshHeadphoneState();
     radio_service_status_t status{};
     radio_service_get_status(&status);
     if (!have_last_status_ || status.catalog_generation != last_status_.catalog_generation ||
@@ -1671,15 +1820,6 @@ void RadioApp::Poll()
         RefreshStatus();
         RefreshHome();
     }
-    if (!have_last_status_ || status.catalog_state != last_status_.catalog_state ||
-        status.refreshing != last_status_.refreshing ||
-        status.searching != last_status_.searching ||
-        status.sync_station_count != last_status_.sync_station_count ||
-        status.error_code != last_status_.error_code)
-    {
-        if (mode_ == Mode::Settings)
-            RefreshSettings(false);
-    }
     UpdateEqualizer(status);
     last_status_ = status;
     have_last_status_ = true;
@@ -1712,18 +1852,77 @@ void RadioApp::UpdateEqualizer(const radio_service_status_t &status)
     }
 }
 
-/* --- v027: touchpad presets, lightbar pulses, EQ surface --------------- */
+/* --- touchpad presets, lightbar pulses and 12-band EQ surface ---------- */
+
+void RadioApp::LoadEq()
+{
+    std::FILE *file = std::fopen("/download0/radio-eq.txt", "rb");
+    if (!file)
+        return;
+
+    char format[8]{};
+    if (std::fscanf(file, "%7s", format) != 1)
+    {
+        std::fclose(file);
+        return;
+    }
+    if (std::strcmp(format, "EQ2") == 0)
+    {
+        int gains[12]{};
+        int left_gain = 0;
+        int right_gain = 0;
+        bool complete = true;
+        for (int band = 0; band < 12; ++band)
+            complete = complete && std::fscanf(file, "%d", &gains[band]) == 1;
+        complete = complete && std::fscanf(file, "%d %d", &left_gain, &right_gain) == 2;
+        if (complete)
+        {
+            for (int band = 0; band < 12; ++band)
+                radio_service_eq_set_gain(band, gains[band]);
+            radio_service_eq_set_channel_gain(0, left_gain);
+            radio_service_eq_set_channel_gain(1, right_gain);
+        }
+    }
+    else
+    {
+        /* Migrate the former five-band file onto its matching 60/250/1k/4k/12k
+         * centers; the seven added bands start flat. */
+        static const int legacy_band[5] = {0, 2, 4, 8, 11};
+        int legacy_gain[5]{};
+        bool complete = std::fseek(file, 0, SEEK_SET) == 0;
+        for (int band = 0; band < 5; ++band)
+            complete = complete && std::fscanf(file, "%d", &legacy_gain[band]) == 1;
+        if (complete)
+        {
+            for (int band = 0; band < 12; ++band)
+                radio_service_eq_set_gain(band, 0);
+            for (int band = 0; band < 5; ++band)
+                radio_service_eq_set_gain(legacy_band[band], legacy_gain[band]);
+        }
+    }
+    std::fclose(file);
+}
 
 void RadioApp::SaveEq()
 {
-    std::FILE *file = std::fopen("/download0/radio-eq.txt", "wb");
-    if (file)
+    constexpr char path[] = "/download0/radio-eq.txt";
+    constexpr char temporary[] = "/download0/radio-eq.txt.tmp";
+    std::FILE *file = std::fopen(temporary, "wb");
+    if (!file)
+        return;
+    bool wrote = std::fputs("EQ2", file) >= 0;
+    for (int band = 0; band < 12; ++band)
+        wrote = wrote && std::fprintf(file, " %d", radio_service_eq_gain(band)) >= 0;
+    wrote = wrote && std::fprintf(file, " %d %d\n", radio_service_eq_channel_gain(0),
+                                  radio_service_eq_channel_gain(1)) >= 0;
+    wrote = wrote && std::fflush(file) == 0;
+    const bool closed = std::fclose(file) == 0;
+    if (!wrote || !closed || std::rename(temporary, path) != 0)
     {
-        for (int b = 0; b < 5; ++b)
-            std::fprintf(file, "%d%c", radio_service_eq_gain(b), b == 4 ? '\n' : ' ');
-        if (std::fclose(file) == 0)
-            (void)radio_payload_bridge_push(RADIO_PAYLOAD_EQ);
+        std::remove(temporary);
+        return;
     }
+    (void)radio_payload_bridge_push(RADIO_PAYLOAD_EQ);
 }
 
 bool RadioApp::IsAuxFavorite(const char *uuid) const
@@ -1819,6 +2018,187 @@ bool RadioApp::ToggleAuxFavorite(const radio_station_t &station)
         aux_favorites_.push_back(station);
     }
     return SaveAuxFavorites();
+}
+
+bool RadioApp::SaveAuxPlaylist(const std::vector<radio_station_t> &stations,
+                               const char *excluded_uuid)
+{
+    const bool exclude_station = excluded_uuid && *excluded_uuid;
+    if (exclude_station &&
+        std::find_if(stations.begin(), stations.end(),
+                     [excluded_uuid](const radio_station_t &station)
+                     { return std::strcmp(station.uuid, excluded_uuid) == 0; }) == stations.end())
+        return false;
+    const std::size_t output_count = stations.size() - (exclude_station ? 1U : 0U);
+    if (stations.size() > kAuxMaxStations || output_count > kAuxMaxStations)
+        return false;
+    std::string document = "#EXTM3U\n";
+    document.reserve(std::min<std::size_t>(RADIO_AUX_PLAYLIST_MAX_BYTES,
+                                           output_count * 256U + 8U));
+    for (const radio_station_t &station : stations)
+    {
+        if (exclude_station && std::strcmp(station.uuid, excluded_uuid) == 0)
+            continue;
+        if (!IsHttpUrl(station.url))
+            return false;
+        std::string name(station.name);
+        std::string group(station.tags[0] ? station.tags : "AUX");
+        for (char &character : name)
+            if (character == '\r' || character == '\n' || character == '"')
+                character = '\'';
+        for (char &character : group)
+            if (character == '\r' || character == '\n' || character == '"')
+                character = ' ';
+        char entry[1024];
+        const int length = std::snprintf(entry, sizeof(entry),
+                                         "#EXTINF:-1 group-title=\"%s\",%s\n%s\n",
+                                         group.c_str(), name.c_str(), station.url);
+        if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(entry) ||
+            static_cast<std::size_t>(length) > RADIO_AUX_PLAYLIST_MAX_BYTES - document.size())
+            return false;
+        document.append(entry, static_cast<std::size_t>(length));
+    }
+    const bool stored = radio_payload_bridge_store_aux_buffer(
+        document.data(), document.size(), RADIO_AUX_FORMAT_M3U);
+    if (stored)
+        radio_service_aux_stations_set(static_cast<int>(output_count));
+    std::fprintf(stderr, "[ProsperoRadio][AUX] edited list stored=%u entries=%u bytes=%u\n",
+                 static_cast<unsigned>(stored), static_cast<unsigned>(output_count),
+                 static_cast<unsigned>(document.size()));
+    return stored;
+}
+
+bool RadioApp::FetchAuxPlaylist()
+{
+    std::vector<unsigned char> document(RADIO_AUX_PLAYLIST_MAX_BYTES +
+                                        RADIO_AUX_PLAYLIST_ENVELOPE_BYTES);
+    std::size_t size = 0U;
+    unsigned char format = RADIO_AUX_FORMAT_AUTO;
+    bool not_found = false;
+    if (!radio_payload_bridge_fetch_aux_buffer(document.data(), document.size(), &size,
+                                               &format, &not_found))
+    {
+        if (not_found)
+        {
+            aux_stations_.clear();
+            radio_service_aux_stations_set(0);
+        }
+        return false;
+    }
+    (void)ScanAuxPlaylist(document.data(), size, format);
+    return true;
+}
+
+bool RadioApp::DeleteAuxStation(const char *uuid)
+{
+    if (!uuid || !*uuid)
+        return false;
+    const auto found = std::find_if(aux_stations_.begin(), aux_stations_.end(),
+                                    [uuid](const radio_station_t &station)
+                                    { return std::strcmp(station.uuid, uuid) == 0; });
+    if (found == aux_stations_.end())
+        return false;
+    if (!SaveAuxPlaylist(aux_stations_, uuid))
+    {
+        SetText(document_, "home-status", "NO SE PUDO GUARDAR LA LISTA AUX");
+        std::fprintf(stderr, "[ProsperoRadio][AUX] delete failed station=%s stage=persist\n", uuid);
+        return false;
+    }
+    aux_stations_.erase(found);
+    BuildList();
+    RefreshList();
+    SetText(document_, "home-status", "EMISORA ELIMINADA DE AUX");
+    std::fprintf(stderr, "[ProsperoRadio][AUX] station removed uuid=%s remaining=%u\n", uuid,
+                 static_cast<unsigned>(aux_stations_.size()));
+    return true;
+}
+
+void RadioApp::BeginAuxDeleteHold()
+{
+    if (list_kind_ != ListKind::Auxiliary || list_cursor_ >= kListRows ||
+        list_indices_[list_cursor_] == kInvalidStation || !list_aux_entries_[list_cursor_])
+        return;
+    const unsigned index = list_indices_[list_cursor_];
+    if (index >= aux_stations_.size())
+        return;
+    aux_delete_hold_active_ = true;
+    CopyString(aux_delete_hold_uuid_, sizeof(aux_delete_hold_uuid_),
+               aux_stations_[index].uuid);
+    aux_delete_hold_start_ = radio_input_milliseconds();
+    aux_delete_display_tenth_ = ~0U;
+    std::fprintf(stderr, "[ProsperoRadio][AUX] delete-hold start uuid=%s duration_ms=%llu\n",
+                 aux_delete_hold_uuid_, kAuxDeleteHoldMs);
+    RefreshList();
+}
+
+void RadioApp::CancelAuxDeleteHold()
+{
+    if (!aux_delete_hold_active_)
+        return;
+    aux_delete_hold_active_ = false;
+    aux_delete_hold_uuid_[0] = '\0';
+    aux_delete_display_tenth_ = ~0U;
+    if (mode_ == Mode::List)
+        RefreshList();
+}
+
+void RadioApp::ReleaseAuxDeleteHold()
+{
+    if (!aux_delete_hold_active_)
+        return;
+    const unsigned long long elapsed = radio_input_milliseconds() - aux_delete_hold_start_;
+    char uuid[sizeof(aux_delete_hold_uuid_)];
+    CopyString(uuid, sizeof(uuid), aux_delete_hold_uuid_);
+    aux_delete_hold_active_ = false;
+    aux_delete_hold_uuid_[0] = '\0';
+    aux_delete_display_tenth_ = ~0U;
+    if (elapsed >= kAuxDeleteHoldMs)
+    {
+        if (!DeleteAuxStation(uuid))
+            RefreshList();
+        return;
+    }
+
+    const auto found = std::find_if(aux_stations_.begin(), aux_stations_.end(),
+                                    [uuid](const radio_station_t &station)
+                                    { return std::strcmp(station.uuid, uuid) == 0; });
+    if (found != aux_stations_.end())
+    {
+        const radio_station_t station = *found;
+        const bool was_favorite = IsAuxFavorite(station.uuid);
+        if (ToggleAuxFavorite(station))
+            SetText(document_, "home-status", was_favorite ? "AUX FAVORITO ELIMINADO"
+                                                            : "AUX FAVORITO GUARDADO");
+        else
+            SetText(document_, "home-status", "NO SE PUDO GUARDAR FAVORITO AUX");
+    }
+    RefreshList();
+}
+
+void RadioApp::UpdateAuxDeleteHold()
+{
+    if (!aux_delete_hold_active_)
+        return;
+    const unsigned long long elapsed = radio_input_milliseconds() - aux_delete_hold_start_;
+    if (elapsed >= kAuxDeleteHoldMs)
+    {
+        char uuid[sizeof(aux_delete_hold_uuid_)];
+        CopyString(uuid, sizeof(uuid), aux_delete_hold_uuid_);
+        aux_delete_hold_active_ = false;
+        aux_delete_hold_uuid_[0] = '\0';
+        aux_delete_display_tenth_ = ~0U;
+        if (!DeleteAuxStation(uuid))
+            RefreshList();
+        return;
+    }
+    const unsigned long long remaining = kAuxDeleteHoldMs - elapsed;
+    const unsigned display_tenth = static_cast<unsigned>((remaining + 99ULL) / 100ULL);
+    if (display_tenth != aux_delete_display_tenth_)
+    {
+        aux_delete_display_tenth_ = display_tenth;
+        if (mode_ == Mode::List && list_kind_ == ListKind::Auxiliary)
+            RefreshList();
+    }
 }
 
 void RadioApp::LoadPresets()
@@ -2127,18 +2507,29 @@ void RadioApp::LightbarTick()
 
 void RadioApp::RefreshEq()
 {
-    static const char *bands[5] = {"60Hz", "250Hz", "1kHz", "4kHz", "12kHz"};
-    for (int i = 0; i < 5; ++i)
+    const auto refresh_control = [this](int control, int gain)
     {
         char id[16];
-        std::snprintf(id, sizeof(id), "eqband-%d", i);
+        std::snprintf(id, sizeof(id), "eqband-%d", control);
+        SetClass(document_, id, "selected", control == eq_sel_);
+
+        std::snprintf(id, sizeof(id), "eqgain-%d", control);
         char text[32];
-        std::snprintf(text, sizeof(text), "%s %s%d", bands[i],
-                      radio_service_eq_gain(i) > 0 ? "+" : "",
-                      radio_service_eq_gain(i));
+        std::snprintf(text, sizeof(text), "%s%ddB", gain > 0 ? "+" : "", gain);
         SetText(document_, id, text);
-        SetClass(document_, id, "selected", i == eq_sel_);
-    }
+
+        const int bounded = std::max(-12, std::min(12, gain));
+        const int height = std::abs(bounded) * 4;
+        const int top = bounded > 0 ? 50 - height : bounded < 0 ? 50 : 49;
+        std::snprintf(id, sizeof(id), "eqfill-%d", control);
+        SetPixelProperty(document_, id, "top", top);
+        SetPixelProperty(document_, id, "height", bounded == 0 ? 2 : height);
+    };
+
+    for (int band = 0; band < 12; ++band)
+        refresh_control(band, radio_service_eq_gain(band));
+    refresh_control(12, radio_service_eq_channel_gain(0));
+    refresh_control(13, radio_service_eq_channel_gain(1));
 }
 
 void RadioApp::RefreshAuxPanel()
@@ -2147,71 +2538,311 @@ void RadioApp::RefreshAuxPanel()
                                       ? "AUX ACTIVO - PUERTO 7000"
                                       : "RED NO DISPONIBLE");
     const int stations = radio_service_aux_stations();
-    SetText(document_, "aux-note",
-            stations >= 0 ? "Entra desde el movil, envia tu M3U y pulsa BARRIDO"
-                          : "Sube tu lista M3U desde el movil o el PC");
+    char note[128];
+    if (stations >= 0)
+        std::snprintf(note, sizeof(note), "AUX %d EMISORAS | ENVIA M3U, PLS, XSPF O ASX",
+                      stations);
+    else
+        CopyString(note, sizeof(note), "SUBE M3U, M3U8, PLS, XSPF O ASX DESDE MOVIL O PC");
+    SetText(document_, "aux-note", note);
 }
 
-void RadioApp::RefreshHeadphoneState()
+unsigned RadioApp::ScanAuxPlaylist(const unsigned char *data, std::size_t size,
+                                   unsigned char format_hint)
 {
-    const int state = radio_input_jack_state();
-    if (state == headphone_state_)
-        return;
-    headphone_state_ = state;
-    SetText(document_, "headphone-status",
-            state < 0 ? "JACK N/A" : state ? "HEADPHONES ON" : "JACK OPEN");
-    SetClass(document_, "headphone-status", "connected", state == 1);
-}
-
-unsigned RadioApp::ScanAuxPlaylist()
-{
-    aux_stations_.clear();
-    std::FILE *file = std::fopen("/download0/radio-aux.m3u", "rb");
-    if (!file)
-        return 0;
-
-    char line[4096];
-    char extinf[2048]{};
-    while (std::fgets(line, sizeof(line), file) != nullptr &&
-           aux_stations_.size() < kAuxMaxStations)
+    constexpr std::size_t kAuxPlaylistMaxBytes = RADIO_AUX_PLAYLIST_MAX_BYTES;
+    if (data == nullptr || size == 0U || size > kAuxPlaylistMaxBytes)
     {
-        const std::size_t length = std::strlen(line);
-        if (length == sizeof(line) - 1 && line[length - 1] != '\n' && !std::feof(file))
-        {
-            int ch = 0;
-            while ((ch = std::fgetc(file)) != '\n' && ch != EOF)
-            {
-            }
-            extinf[0] = '\0';
-            continue;
-        }
-        TrimLine(line);
-        if (!*line)
-            continue;
-        if (strncasecmp(line, "#EXTINF:", 8) == 0)
-        {
-            CopyString(extinf, sizeof(extinf), line);
-            continue;
-        }
-        if (line[0] == '#')
-            continue;
-        if (!IsHttpUrl(line))
-        {
-            extinf[0] = '\0';
-            continue;
-        }
-        radio_station_t station{};
-        if (std::strlen(line) >= sizeof(station.url))
-        {
-            extinf[0] = '\0';
-            continue;
-        }
-        MakeAuxStation(line, extinf, &station);
-        aux_stations_.push_back(station);
-        extinf[0] = '\0';
+        std::fprintf(stderr,
+                     "[ProsperoRadio][AUX] scan rejected reason=buffer-or-size bytes=%llu; "
+                     "previous list kept\n",
+                     (unsigned long long)size);
+        return static_cast<unsigned>(aux_stations_.size());
     }
-    std::fclose(file);
-    std::fprintf(stderr, "[ProsperoRadio][AUX] M3U scan parsed=%u cap=%u\n",
+    std::string_view document(reinterpret_cast<const char *>(data), size);
+    if (document.find('\0') != std::string_view::npos)
+    {
+        std::fprintf(stderr,
+                     "[ProsperoRadio][AUX] scan rejected reason=embedded-nul bytes=%llu; "
+                     "previous list kept\n",
+                     (unsigned long long)size);
+        return static_cast<unsigned>(aux_stations_.size());
+    }
+    if (format_hint > RADIO_AUX_FORMAT_ASX)
+        format_hint = RADIO_AUX_FORMAT_AUTO;
+
+    if (document.size() >= 3U &&
+        static_cast<unsigned char>(document[0]) == 0xefU &&
+        static_cast<unsigned char>(document[1]) == 0xbbU &&
+        static_cast<unsigned char>(document[2]) == 0xbfU)
+        document.remove_prefix(3U);
+    if (format_hint == RADIO_AUX_FORMAT_M3U8 && !IsValidUtf8(document))
+    {
+        std::fprintf(stderr,
+                     "[ProsperoRadio][AUX] scan rejected format=m3u8 reason=invalid-utf8; "
+                     "previous list kept\n");
+        return static_cast<unsigned>(aux_stations_.size());
+    }
+
+    std::vector<radio_station_t> parsed;
+    parsed.reserve(128U);
+    const bool is_hls_manifest = FindCi(document, "#EXT-X-") != std::string::npos;
+    bool format_recognized = false;
+    const char *format = "unknown";
+    if (is_hls_manifest)
+    {
+        std::fprintf(stderr,
+                     "[ProsperoRadio][AUX] scan rejected format=hls-manifest; "
+                     "this endpoint is not a station-list file\n");
+        return static_cast<unsigned>(aux_stations_.size());
+    }
+    const bool content_pls = FindCi(document, "[playlist]") != std::string::npos ||
+                             FindCi(document, "file1=") != std::string::npos;
+    const bool content_xspf = FindCi(document, "xspf.org/ns") != std::string::npos ||
+                              (FindCi(document, "<tracklist") != std::string::npos &&
+                               FindCi(document, "<location") != std::string::npos);
+    const bool content_asx = FindCi(document, "<asx") != std::string::npos;
+    const bool has_m3u_header = FindCi(document, "#EXTM3U") != std::string::npos;
+    bool content_m3u = has_m3u_header || FindCi(document, "#EXTINF:") != std::string::npos;
+    for (std::size_t position = 0U; !content_m3u && position < document.size();)
+    {
+        const std::size_t end = document.find('\n', position);
+        const std::string_view line = TrimView(document.substr(
+            position, (end == std::string::npos ? document.size() : end) - position));
+        content_m3u = line.size() >= 7U && strncasecmp(line.data(), "http://", 7U) == 0;
+        content_m3u = content_m3u ||
+                      (line.size() >= 8U && strncasecmp(line.data(), "https://", 8U) == 0);
+        position = end == std::string::npos ? document.size() : end + 1U;
+    }
+    const bool use_pls = content_pls ||
+                         (format_hint == RADIO_AUX_FORMAT_PLS && !content_xspf && !content_asx &&
+                          !content_m3u);
+    const bool use_xspf = content_xspf ||
+                          (format_hint == RADIO_AUX_FORMAT_XSPF && !content_pls && !content_asx &&
+                           !content_m3u);
+    const bool use_asx = content_asx ||
+                         (format_hint == RADIO_AUX_FORMAT_ASX && !content_pls && !content_xspf &&
+                          !content_m3u);
+    if (use_pls)
+    {
+        format = "pls";
+        format_recognized = true;
+        struct PlsRecord
+        {
+            std::string url;
+            std::string title;
+        };
+        std::map<unsigned, PlsRecord> entries;
+        std::size_t position = 0U;
+        while (position < document.size())
+        {
+            const std::size_t end = document.find('\n', position);
+            const std::string_view line = TrimView(std::string_view(document).substr(
+                position, (end == std::string::npos ? document.size() : end) - position));
+            const std::size_t equals = line.find('=');
+            if (equals != std::string_view::npos)
+            {
+                const std::string_view key = TrimView(line.substr(0U, equals));
+                const std::string_view value = TrimView(line.substr(equals + 1U));
+                const bool is_file = key.size() > 4U &&
+                                     std::tolower((unsigned char)key[0]) == 'f' &&
+                                     std::tolower((unsigned char)key[1]) == 'i' &&
+                                     std::tolower((unsigned char)key[2]) == 'l' &&
+                                     std::tolower((unsigned char)key[3]) == 'e';
+                const bool is_title = key.size() > 5U &&
+                                      std::tolower((unsigned char)key[0]) == 't' &&
+                                      std::tolower((unsigned char)key[1]) == 'i' &&
+                                      std::tolower((unsigned char)key[2]) == 't' &&
+                                      std::tolower((unsigned char)key[3]) == 'l' &&
+                                      std::tolower((unsigned char)key[4]) == 'e';
+                const std::size_t prefix = is_file ? 4U : is_title ? 5U : key.size();
+                if ((is_file || is_title) && prefix < key.size())
+                {
+                    unsigned index = 0U;
+                    bool digits = true;
+                    for (std::size_t at = prefix; at < key.size(); ++at)
+                    {
+                        if (key[at] < '0' || key[at] > '9' ||
+                            index > (UINT_MAX - (unsigned)(key[at] - '0')) / 10U)
+                        {
+                            digits = false;
+                            break;
+                        }
+                        index = index * 10U + (unsigned)(key[at] - '0');
+                    }
+                    if (digits && index != 0U)
+                    {
+                        PlsRecord &entry = entries[index];
+                        (is_file ? entry.url : entry.title).assign(value.data(), value.size());
+                    }
+                }
+            }
+            position = end == std::string::npos ? document.size() : end + 1U;
+        }
+        for (const auto &item : entries)
+        {
+            if (item.second.url.empty())
+                continue;
+            std::string extinf = "#EXTINF:-1," + item.second.title;
+            AddAuxStation(parsed, item.second.url, std::move(extinf));
+        }
+    }
+    else if (use_xspf)
+    {
+        format = "xspf";
+        format_recognized = true;
+        std::size_t position = 0U;
+        while (parsed.size() < kAuxMaxStations)
+        {
+            const std::size_t open = FindCi(document, "<track", position);
+            if (open == std::string::npos)
+                break;
+            const std::size_t tag_end = document.find('>', open + 6U);
+            if (tag_end == std::string::npos)
+                break;
+            if (tag_end > open + 6U &&
+                !std::isspace((unsigned char)document[open + 6U]) &&
+                document[open + 6U] != '>')
+            {
+                position = tag_end + 1U;
+                continue;
+            }
+            const std::size_t close = FindCi(document, "</track>", tag_end + 1U);
+            if (close == std::string::npos)
+                break;
+            const std::string_view track(document.data() + open, close + 8U - open);
+            std::string url;
+            std::string title;
+            if (XmlTagContent(track, "location", url))
+            {
+                (void)XmlTagContent(track, "title", title);
+                AddAuxStation(parsed, url, "#EXTINF:-1," + title);
+            }
+            position = close + 8U;
+        }
+    }
+    else if (use_asx)
+    {
+        format = "asx";
+        format_recognized = true;
+        std::size_t position = 0U;
+        while (parsed.size() < kAuxMaxStations)
+        {
+            const std::size_t open = FindCi(document, "<entry", position);
+            if (open == std::string::npos)
+                break;
+            const std::size_t tag_end = document.find('>', open + 6U);
+            if (tag_end == std::string::npos)
+                break;
+            if (tag_end > open + 6U &&
+                !std::isspace((unsigned char)document[open + 6U]) &&
+                document[open + 6U] != '>')
+            {
+                position = tag_end + 1U;
+                continue;
+            }
+            const std::size_t close = FindCi(document, "</entry>", tag_end + 1U);
+            if (close == std::string::npos)
+                break;
+            const std::string_view entry(document.data() + open, close + 8U - open);
+            const std::size_t ref = FindCi(entry, "<ref");
+            std::string url;
+            std::string title;
+            if (ref != std::string_view::npos)
+            {
+                const std::size_t ref_end = entry.find('>', ref + 4U);
+                if (ref_end != std::string_view::npos)
+                    (void)XmlAttribute(entry.substr(ref, ref_end - ref + 1U), "href", url);
+            }
+            if (!url.empty())
+            {
+                (void)XmlTagContent(entry, "title", title);
+                AddAuxStation(parsed, url, "#EXTINF:-1," + title);
+            }
+            position = close + 8U;
+        }
+    }
+    else
+    {
+        format = format_hint == RADIO_AUX_FORMAT_M3U8 ? "m3u8"
+                 : format_hint == RADIO_AUX_FORMAT_M3U ? "m3u"
+                 : has_m3u_header                  ? "m3u/m3u8"
+                                                   : "m3u-url-list";
+        format_recognized = format_hint == RADIO_AUX_FORMAT_M3U ||
+                            format_hint == RADIO_AUX_FORMAT_M3U8 || content_m3u;
+        std::size_t position = 0U;
+        std::string extinf;
+        while (position < document.size() && parsed.size() < kAuxMaxStations)
+        {
+            const std::size_t end = document.find('\n', position);
+            std::string_view line = TrimView(std::string_view(document).substr(
+                position, (end == std::string::npos ? document.size() : end) - position));
+            if (!line.empty() && line.size() >= 3U &&
+                static_cast<unsigned char>(line[0]) == 0xefU &&
+                static_cast<unsigned char>(line[1]) == 0xbbU &&
+                static_cast<unsigned char>(line[2]) == 0xbfU)
+                line.remove_prefix(3U);
+            if (line.size() >= 8U && strncasecmp(line.data(), "#EXTINF:", 8U) == 0)
+            {
+                if (format_hint == RADIO_AUX_FORMAT_M3U && !IsValidUtf8(line))
+                    extinf = DecodeWindows1252(line);
+                else
+                    extinf.assign(line.data(), line.size());
+            }
+            else if (!line.empty() && line.front() != '#')
+            {
+                const std::string url(line.data(), line.size());
+                if (IsHttpUrl(url.c_str()))
+                {
+                    format_recognized = true;
+                    AddAuxStation(parsed, url, extinf);
+                }
+                extinf.clear();
+            }
+            position = end == std::string::npos ? document.size() : end + 1U;
+        }
+    }
+
+    if (!format_recognized)
+    {
+        std::fprintf(stderr,
+                     "[ProsperoRadio][AUX] scan rejected format=unknown bytes=%llu; "
+                     "previous list kept\n",
+                     (unsigned long long)document.size());
+        return static_cast<unsigned>(aux_stations_.size());
+    }
+
+    std::unordered_set<std::string> seen_urls;
+    seen_urls.reserve(parsed.size());
+    std::vector<radio_station_t> unique;
+    unique.reserve(parsed.size());
+    for (const radio_station_t &station : parsed)
+    {
+        std::string url_key(station.url);
+        const std::size_t scheme_end = url_key.find("://");
+        if (scheme_end != std::string::npos)
+        {
+            for (std::size_t i = 0; i < scheme_end; ++i)
+                url_key[i] = static_cast<char>(std::tolower((unsigned char)url_key[i]));
+            const std::size_t authority_begin = scheme_end + 3U;
+            const std::size_t authority_end = url_key.find_first_of("/?#", authority_begin);
+            const std::size_t authority_limit = authority_end == std::string::npos
+                                                    ? url_key.size()
+                                                    : authority_end;
+            const std::size_t user_info = url_key.rfind('@', authority_limit);
+            const std::size_t host_begin = user_info != std::string::npos &&
+                                                   user_info >= authority_begin
+                                               ? user_info + 1U
+                                               : authority_begin;
+            for (std::size_t i = host_begin; i < authority_limit; ++i)
+                url_key[i] = static_cast<char>(std::tolower((unsigned char)url_key[i]));
+        }
+        if (seen_urls.emplace(std::move(url_key)).second)
+            unique.push_back(station);
+    }
+    aux_stations_.swap(unique);
+    radio_service_aux_stations_set(static_cast<int>(aux_stations_.size()));
+    std::fprintf(stderr, "[ProsperoRadio][AUX] scan format=%s parsed=%u cap=%u\n", format,
                  static_cast<unsigned>(aux_stations_.size()), kAuxMaxStations);
     return static_cast<unsigned>(aux_stations_.size());
 }

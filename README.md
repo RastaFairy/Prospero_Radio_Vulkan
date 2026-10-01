@@ -6,12 +6,12 @@
 
 Radio por internet para PS5 con una interfaz inspirada en un receptor clásico.
 
-![versión overlay](https://img.shields.io/badge/overlay-01.000.042-orange)
+![versión overlay](https://img.shields.io/badge/overlay-01.000.046-orange)
 ![plataforma](https://img.shields.io/badge/plataforma-PS5-00adef)
 ![estado](https://img.shields.io/badge/estado-validacion%20parcial-orange)
 ![licencia](https://img.shields.io/badge/licencia-GPL--3.0--or--later-orange)
 
-[Manual](docs/MANUAL-USUARIO.md) · [Cambios](CHANGELOG.md) · [Pendientes](docs/PENDIENTES.md) · [Créditos](docs/CREDITOS.md) · [Contribuir](CONTRIBUTING.md) · [Licencia (ES)](LICENSE-ES.md) · [Integración Vulkan](VULKAN-INTEGRATION.md) · [Problemas](https://github.com/RastaFairy/Prospero_Radio_Vulkan/issues)
+[Manual](docs/MANUAL-USUARIO.md) · [Flujos por módulos](docs/FLUJOS-OPERACION.md) · [Cambios](CHANGELOG.md) · [Pendientes](docs/PENDIENTES.md) · [Créditos](docs/CREDITOS.md) · [Fuentes técnicas](docs/FUENTES-TECNICAS.md) · [Contribuir](CONTRIBUTING.md) · [Licencia (ES)](LICENSE-ES.md) · [Integración Vulkan](VULKAN-INTEGRATION.md) · [Problemas](https://github.com/RastaFairy/Prospero_Radio_Vulkan/issues)
 
 </div>
 
@@ -19,17 +19,18 @@ Radio por internet para PS5 con una interfaz inspirada en un receptor clásico.
 
 ## Estado actual
 
-La versión fuente y el paquete local más reciente son **01.000.042**. El paquete
-FFPFSC se generó correctamente y superó el gate de recursos. Las capturas recibidas
-el 28-09-2026 muestran la v042 ejecutándose en una PS5: aparece una emisora y se
-puede abrir la lista AUX M3U. Es una validación parcial; no se cotejó el hash del
-paquete instalado y no certifica todas las funciones.
+La versión fuente actual y la build publicada más reciente son **01.000.046**.
+El paquete FFPFSC se compiló el 01-10-2026, pasó el gate de recursos (14
+aprobados, 0 avisos, 0 fallos) y su SHA-256 coincide con el asset de la release
+[01.000.046](https://github.com/RastaFairy/Prospero_Radio_Vulkan/releases/tag/01.000.046):
+`26B77747F9142472B0213B33E14FFAD435CB3A6B3B06157CAAD0848ADE4B8940`.
 
-En esa prueba siguen observándose etiquetas de fuente superpuestas o vacías, el
-estado `JACK N/A` al conectar el mando, y el usuario reporta que una lista M3U
-reenviada puede duplicar emisoras ya importadas. En la página web AUX, el subtítulo
-superior pierde contraste hacia la derecha. Estos puntos están registrados en
-[`docs/PENDIENTES.md`](docs/PENDIENTES.md); no se han corregido en esta publicación.
+El usuario confirmó la v046 en PS5: la interfaz se mantiene ágil, reconoce la
+configuración previa en `/data/radio` y la cruceta recorre la lista al mantener
+arriba o abajo. Conserva también defectos de reproducción: el test DASH 06 se oye
+como ruido blanco y algunos streams HLS fallan. La observación de consola no
+equivale a validar todos los formatos o emisoras. Estado y límites en
+[`docs/PENDIENTES.md`](docs/PENDIENTES.md).
 
 ## Qué aporta este fork
 

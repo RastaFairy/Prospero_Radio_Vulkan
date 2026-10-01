@@ -22,23 +22,30 @@ Este archivo tiene metadatos de hora anteriores a los del klog y no hay evidenci
 
 ### Código fuente relacionado
 
-- [`overlay/src/app_cpp_runtime.cpp`](../overlay/src/app_cpp_runtime.cpp): redirige `stderr` a `/download0/prospero-radio.log` y lo deja sin búfer. La comprobación/rotación de 2 MiB se realiza al inicio del proceso; no vuelve a ejecutarse mientras la app permanece abierta.
+- [`overlay/src/app_cpp_runtime.cpp`](../overlay/src/app_cpp_runtime.cpp): la fuente de v042 redirigía `stderr` a `/download0/prospero-radio.log` y lo dejaba sin búfer. En esa versión, la comprobación de 2 MiB solo se realizaba al inicio.
 - [`src/main.cpp`](../src/main.cpp): carga las caras bitmap Montserrat en pesos normales.
 - [`overlay/src/bitmap_font_engine.cpp`](../overlay/src/bitmap_font_engine.cpp): el cargador bitmap registra las caras encontradas; la ruta de `LoadFontFace` no remapea por sí misma la solicitud de peso.
 - [`overlay/assets/ui/styles/app.rcss`](../overlay/assets/ui/styles/app.rcss): los estados de los chips de presets solicitan `font-weight: bold`.
 
 ## Diagnóstico
 
-**Confirmado:** el usuario observa lentitud tras varias horas; el klog de la ejecución entregada contiene 1.006 errores `filesystem full`; hay un log local de v042 con 29.019 avisos de fuente y un tamaño de 11,6 MB; el logger permite que el archivo crezca durante la sesión porque solo aplica el límite al arrancar.
+**Confirmado:** el usuario observa lentitud tras varias horas; el klog de la ejecución entregada contiene 1.006 errores `filesystem full`; hay un log local de v042 con 29.019 avisos de fuente y un tamaño de 11,6 MB; la fuente de v042 permitía que el archivo creciera durante la sesión porque solo aplicaba el límite al arrancar.
 
 **Hipótesis principal:** la solicitud de `Montserrat [bold]`, no satisfecha por las caras cargadas, produce avisos repetidos. Al escribirse sin búfer en `/download0`, podrían contribuir al agotamiento del almacenamiento y a la degradación. Falta el log de runtime de la misma sesión del klog, y el klog no señala el montaje ni el archivo agotado; por eso no se debe presentar como causa raíz confirmada.
 
 **No demostrado:** fuga de memoria, crecimiento de memoria por horas, agotamiento de un montaje concreto o correlación exacta entre esos avisos y el episodio de lentitud. La evidencia disponible es de filesystem; no muestra una tendencia de memoria de la app.
 
+## Cambio de fuente incluido en 01.000.046
+
+La fuente se compiló en v046 y el usuario confirmó que la interfaz mantiene una respuesta ágil durante su prueba. Esta observación no fue una sesión prolongada y no permite cerrar el diagnóstico de filesystem.
+
+- La consulta de tipografía usa la cara Montserrat regular más cercana cuando RCSS solicita `bold` y no hay atlas bold cargado. Esto permite resolver la cara en vez de generar un aviso por frame; no se instaló un filtro para ocultar mensajes.
+- El runtime vuelve a comprobar el tamaño de `stderr` desde el loop y reinicia el archivo al superar 2 MiB, conservando en él los mensajes recientes. La comprobación ocurre cada 30 frames; el tamaño puede superar el umbral entre comprobaciones.
+
+El fallback está diseñado para evitar el aviso repetido de fuente identificado en la evidencia local y la rotación para acotar el crecimiento sostenido del archivo. No hay un log de runtime v046 emparejado con un klog prolongado que confirme que desaparecieron los avisos, que el log se mantuvo cerca del límite o que cesaron los `filesystem full`.
+
 ## Método de corrección y cierre
 
-1. Corregir la correspondencia entre los pesos solicitados por RCSS y las caras Montserrat realmente registradas. Mantener el estilo visual deseado cargando la cara adecuada o ajustando la solicitud de peso al recurso disponible; no suprimir los avisos.
-2. Hacer que la rotación/límite del log se aplique durante toda la sesión y que conserve el tramo reciente útil. El logger no debe poder generar escrituras ilimitadas si un aviso se repite.
-3. En una sesión prolongada de consola, conservar juntos el log de runtime y el klog, con hora de inicio/fin y versión/hash del paquete. Confirmar que desaparece el aviso de fuente, el tamaño del log permanece acotado, no aparecen errores `filesystem full` y la interfaz conserva su respuesta después de varias horas.
+1. En una sesión prolongada de consola con v046, conservar juntos el log exportable `/download0/prospero-radio.log` y el klog, con hora de inicio/fin y versión/hash del paquete. Confirmar si desaparece el aviso de fuente, el log rota cerca del límite, aparecen errores `filesystem full` y la interfaz conserva su respuesta después de varias horas.
 
-No se modificó el runtime ni se compiló una build durante la documentación de este diagnóstico.
+La v046 sí se compiló y se probó en PS5; esta revisión documental no compiló ni ejecutó pruebas.

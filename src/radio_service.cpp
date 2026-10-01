@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include "radio_service.hpp"
+#include "payload_probe.hpp"
 
 #include <cmath>
 
@@ -19,6 +20,8 @@
 #include <string.h>
 #include <stdio.h>
 #include "playback_retry.hpp"
+#include "radio_aes128.hpp"
+#include "radio_dash.hpp"
 #include "radio_hls.hpp"
 #include "radio_catalog_store.hpp"
 #include "radio_playlist.hpp"
@@ -230,132 +233,32 @@ void radio_service_eq_process(int16_t *frames, unsigned count)
     }
 }
 
-/* --- v027: AUX ingest server (best-effort POSIX sockets) -------------- */
-extern "C"
-{
-    extern int socket(int, int, int);
-    extern int bind(int, const void *, unsigned int);
-    extern int listen(int, int);
-    extern int accept(int, void *, unsigned int *);
-    extern long recv(int, void *, unsigned long, int);
-    extern long send(int, const void *, unsigned long, int);
-    extern int close(int);
-    extern int sceNetInit(unsigned long, int, unsigned long, int, unsigned long);
-}
-struct aux_sockaddr_in_t
-{
-    unsigned char len;
-    unsigned char family;
-    unsigned short port_be;
-    unsigned int addr;
-    char zero[8];
-};
-static SDL_Thread *g_aux_thread = nullptr;
-static bool g_aux_running = false;
+/* AUX networking and document storage are owned by the payload bridge. */
 static int g_aux_stations = -1;
-static const char AUX_PAGE[] = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\r\n"
-                               "<!doctype html><title>Prospero AUX</title><meta name=viewport "
-                               "content='width=device-width,initial-scale=1'>"
-                               "<body "
-                               "style='background:#1a120b;color:#f4be76;font-family:sans-serif;"
-                               "text-align:center;padding-top:3em'>"
-                               "<h1>ProsperoRadio AUX</h1><textarea id=m rows=14 style='width:90%' "
-                               "placeholder='Pega aqui tu lista M3U'></textarea>"
-                               "<br><button style='font-size:1.4em;padding:.5em 2em;margin:1em' "
-                               "onclick=\"fetch('/"
-                               "list',{method:'POST',body:document.getElementById('m').value})."
-                               "then(()=>alert('Lista enviada'))\">ENVIAR A LA PS5</button>";
-static const char AUX_OK[] = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nOK";
-
-static void aux_count_m3u(void)
-{
-    FILE *f = fopen("/download0/radio-aux.m3u", "rb");
-    if (!f)
-    {
-        g_aux_stations = -1;
-        return;
-    }
-    char line[512];
-    int n = 0;
-    while (fgets(line, sizeof(line), f))
-        if (strncmp(line, "#EXTINF", 7) == 0)
-            ++n;
-    fclose(f);
-    g_aux_stations = n;
-}
-
-static int aux_server_thread(void *arg)
-{
-    (void)arg;
-    const int listener = socket(2 /*AF_INET*/, 1 /*SOCK_STREAM*/, 0);
-    if (listener < 0)
-        return -1;
-    aux_sockaddr_in_t addr{};
-    addr.len = sizeof(addr);
-    addr.family = 2;
-    addr.port_be = (unsigned short)((7000 >> 8) | (7000 << 8));
-    if (bind(listener, &addr, sizeof(addr)) < 0 || listen(listener, 4) < 0)
-    {
-        close(listener);
-        return -1;
-    }
-    for (;;)
-    {
-        const int conn = accept(listener, nullptr, nullptr);
-        if (conn < 0)
-            continue;
-        char request[4096];
-        long got = recv(conn, request, sizeof(request) - 1, 0);
-        if (got <= 0)
-        {
-            close(conn);
-            continue;
-        }
-        request[got] = 0;
-        if (strncmp(request, "POST /list", 10) == 0)
-        {
-            const char *body = strstr(request, "\r\n\r\n");
-            if (body)
-            {
-                body += 4;
-                FILE *f = fopen("/download0/radio-aux.m3u", "wb");
-                if (f)
-                {
-                    fwrite(body, 1, strlen(body), f);
-                    fclose(f);
-                    aux_count_m3u();
-                }
-            }
-            send(conn, AUX_OK, sizeof(AUX_OK) - 1, 0);
-        }
-        else
-        {
-            send(conn, AUX_PAGE, sizeof(AUX_PAGE) - 1, 0);
-        }
-        close(conn);
-    }
-    return 0;
-}
 
 void radio_service_aux_start(void)
 {
-    if (g_aux_running)
-        return;
-    aux_count_m3u();
-    if (sceNetInit(0x40000, 0, 0, 0, 0) < 0)
-        return; /* net stack unavailable: the surface shows the hint */
-    g_aux_thread = SDL_CreateThread(aux_server_thread, "aux", nullptr);
-    g_aux_running = g_aux_thread != nullptr;
+    const bool ready = radio_payload_bridge_aux_start();
+    fprintf(stderr, "[AUX] payload server start %s port=7000\n", ready ? "PASS" : "FAIL");
 }
 
 bool radio_service_aux_running(void)
 {
-    return g_aux_running;
+    return radio_payload_bridge_aux_running();
 }
 
 int radio_service_aux_stations(void)
 {
     return g_aux_stations;
+}
+
+void radio_service_aux_stations_set(int count)
+{
+    if (count < 0)
+        count = -1;
+    else if (count > 4096)
+        count = 4096;
+    g_aux_stations = count;
 }
 
 void radio_service_eq_process(int16_t *frames, unsigned count);
@@ -367,9 +270,14 @@ void radio_service_eq_process(int16_t *frames, unsigned count);
 #define PLAYLIST_REDIRECT_LIMIT 3U
 #define STREAM_OPEN_DIRECT 0
 #define STREAM_OPEN_HLS 1
+#define STREAM_OPEN_DASH 2
 #define HLS_PLAYLIST_BUFFER_SIZE (128U * 1024U)
 #define HLS_NETWORK_BUFFER_SIZE (16U * 1024U)
 #define HLS_OUTPUT_BUFFER_SIZE (64U * 1024U)
+#define HLS_ENCRYPTED_SEGMENT_MAX (1024U * 1024U)
+#define DASH_DOCUMENT_BUFFER_SIZE (128U * 1024U)
+#define DASH_INIT_BUFFER_SIZE (256U * 1024U)
+#define DASH_SEGMENT_BUFFER_SIZE (1024U * 1024U)
 #define HLS_MASTER_LIMIT 2U
 #define HLS_LIVE_EDGE_SEGMENTS 2U
 #define HLS_ERROR_PLAYLIST (-2101)
@@ -950,12 +858,21 @@ static int open_resolved_stream(const radio_station_t *station, int *connection,
     int result = -2;
     for (unsigned depth = 0; depth < PLAYLIST_REDIRECT_LIMIT; ++depth)
     {
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s phase=source-open depth=%u\n",
+                station->uuid, depth + 1U);
         result = http_open(current, true, station->codec, connection, request, nullptr);
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s phase=source-open result=%d\n",
+                station->uuid, result);
         if (result < 0)
             break;
         radio_playlist_kind_t kind = station->hls != 0U && depth == 0U
                                          ? RADIO_PLAYLIST_HLS
                                          : http_playlist_kind(*request, current);
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s phase=source-detect kind=%u depth=%u\n",
+                station->uuid, (unsigned)kind, depth + 1U);
         if (kind == RADIO_PLAYLIST_NONE)
         {
             SDL_strlcpy(resolved_url, current, resolved_capacity);
@@ -972,9 +889,25 @@ static int open_resolved_stream(const radio_station_t *station, int *connection,
             free(document);
             return STREAM_OPEN_HLS;
         }
+        if (kind == RADIO_PLAYLIST_DASH)
+        {
+            SDL_strlcpy(resolved_url, current, resolved_capacity);
+            playback_request_clear(*request);
+            http_close(*connection, *request);
+            *connection = -1;
+            *request = -1;
+            free(document);
+            return STREAM_OPEN_DASH;
+        }
 
         size_t document_size = 0;
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s phase=playlist-read kind=%u\n",
+                station->uuid, (unsigned)kind);
         result = read_playlist_document(*request, document, PLAYLIST_BUFFER_SIZE, &document_size);
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s phase=playlist-read result=%d bytes=%llu\n",
+                station->uuid, result, (unsigned long long)document_size);
         playback_request_clear(*request);
         http_close(*connection, *request);
         *connection = -1;
@@ -989,14 +922,28 @@ static int open_resolved_stream(const radio_station_t *station, int *connection,
             free(document);
             return STREAM_OPEN_HLS;
         }
-        if (body_kind == RADIO_PLAYLIST_M3U || body_kind == RADIO_PLAYLIST_PLS)
+        if (body_kind == RADIO_PLAYLIST_DASH)
+        {
+            SDL_strlcpy(resolved_url, current, resolved_capacity);
+            free(document);
+            return STREAM_OPEN_DASH;
+        }
+        if (body_kind == RADIO_PLAYLIST_M3U || body_kind == RADIO_PLAYLIST_PLS ||
+            body_kind == RADIO_PLAYLIST_XSPF || body_kind == RADIO_PLAYLIST_ASX)
             kind = body_kind;
 
         char resolved[sizeof(current)];
         result = (int)radio_playlist_first_url(kind, document, document_size, current, resolved,
                                                sizeof(resolved));
         if (result < 0)
+        {
+            fprintf(stderr,
+                    "[ProsperoRadio][playback] station=%s phase=playlist-parse kind=%u "
+                    "bytes=%llu result=%d\n",
+                    station->uuid, (unsigned)kind,
+                    (unsigned long long)document_size, result);
             break;
+        }
         SDL_strlcpy(current, resolved, sizeof(current));
     }
     free(document);
@@ -2713,17 +2660,33 @@ struct hls_reader_t
     radio_ts_aac_parser_t *transport;
     uint8_t *network;
     uint8_t *output;
+    uint8_t *encrypted_segment;
     size_t output_at;
     size_t output_size;
+    size_t encrypted_size;
+    size_t encrypted_parse_at;
     char playlist_url[RADIO_HLS_URL_BYTES];
+    char station_uuid[40];
+    uint8_t key[16];
+    uint8_t segment_iv[16];
     uint64_t next_sequence;
     uint64_t segment_sequence;
     uint32_t reload_at;
     unsigned source_channels;
+    unsigned diagnostic_segments_logged;
     bool discontinuity_pending;
+    bool segment_encrypted;
+    bool encrypted_ready;
     int connection;
     int request;
 };
+
+static void hls_secure_zero(void *memory, size_t size)
+{
+    volatile uint8_t *bytes = static_cast<volatile uint8_t *>(memory);
+    while (size-- != 0U)
+        *bytes++ = 0U;
+}
 
 static void hls_request_close(hls_reader_t *reader)
 {
@@ -2732,6 +2695,61 @@ static void hls_request_close(hls_reader_t *reader)
     http_close(reader->connection, reader->request);
     reader->connection = -1;
     reader->request = -1;
+}
+
+static int hls_fetch_key(const char *url, uint8_t key[16])
+{
+    int connection = -1;
+    int request = -1;
+    const int opened = http_open(url, false, "AAC", &connection, &request, nullptr);
+    if (opened < 0)
+        return opened;
+    uint8_t response[17];
+    size_t received = 0U;
+    while (received < sizeof(response) && !SDL_AtomicGet(&g_stop_playback))
+    {
+        const int amount = sceHttpReadData(request, response + received, sizeof(response) - received);
+        if (amount < 0)
+        {
+            hls_secure_zero(response, sizeof(response));
+            received = 0U;
+            break;
+        }
+        if (amount == 0)
+            break;
+        received += (size_t)amount;
+    }
+    playback_request_clear(request);
+    http_close(connection, request);
+    if (SDL_AtomicGet(&g_stop_playback))
+    {
+        hls_secure_zero(response, sizeof(response));
+        return 0;
+    }
+    if (received != 16U)
+    {
+        hls_secure_zero(response, sizeof(response));
+        return HLS_ERROR_PLAYLIST;
+    }
+    memcpy(key, response, 16U);
+    hls_secure_zero(response, sizeof(response));
+    return 0;
+}
+
+static void hls_segment_iv(const radio_hls_segment_t *segment, uint8_t iv[16])
+{
+    memset(iv, 0, 16U);
+    if (segment->iv_present != 0U)
+    {
+        memcpy(iv, segment->iv, 16U);
+        return;
+    }
+    uint64_t sequence = segment->sequence;
+    for (int i = 15; i >= 8; --i)
+    {
+        iv[i] = (uint8_t)(sequence & UINT64_C(0xff));
+        sequence >>= 8U;
+    }
 }
 
 static int hls_fetch_playlist(const char *initial_url, radio_hls_playlist_t *playlist,
@@ -2806,11 +2824,13 @@ static unsigned hls_live_edge(const radio_hls_playlist_t *playlist)
                : 0U;
 }
 
-static int hls_reader_open(hls_reader_t *reader, const char *url)
+static int hls_reader_open(hls_reader_t *reader, const char *url, const char *station_uuid)
 {
     memset(reader, 0, sizeof(*reader));
     reader->connection = -1;
     reader->request = -1;
+    SDL_strlcpy(reader->station_uuid, station_uuid ? station_uuid : "?",
+                sizeof(reader->station_uuid));
     reader->playlist = static_cast<radio_hls_playlist_t *>(malloc(sizeof(radio_hls_playlist_t)));
     reader->transport = static_cast<radio_ts_aac_parser_t *>(malloc(sizeof(radio_ts_aac_parser_t)));
     reader->network = static_cast<uint8_t *>(malloc(HLS_NETWORK_BUFFER_SIZE));
@@ -2819,8 +2839,16 @@ static int hls_reader_open(hls_reader_t *reader, const char *url)
         reader->output == nullptr)
         return -1;
 
+    fprintf(stderr, "[ProsperoRadio][playback] station=%s mode=hls phase=manifest-read\n",
+            reader->station_uuid);
     int result = hls_fetch_playlist(url, reader->playlist, reader->playlist_url,
                                     sizeof(reader->playlist_url), &reader->source_channels);
+    fprintf(stderr,
+            "[ProsperoRadio][playback] station=%s mode=hls phase=manifest-read result=%d "
+            "segments=%u live=%u\n",
+            reader->station_uuid, result,
+            result >= 0 ? reader->playlist->segment_count : 0U,
+            result >= 0 ? reader->playlist->is_live : 0U);
     if (result < 0 || SDL_AtomicGet(&g_stop_playback))
         return result;
     const unsigned first = reader->playlist->is_live != 0U ? hls_live_edge(reader->playlist) : 0U;
@@ -2834,6 +2862,13 @@ static void hls_reader_close(hls_reader_t *reader)
     hls_request_close(reader);
     free(reader->output);
     free(reader->network);
+    if (reader->encrypted_segment != nullptr)
+    {
+        hls_secure_zero(reader->encrypted_segment, HLS_ENCRYPTED_SEGMENT_MAX);
+        free(reader->encrypted_segment);
+    }
+    hls_secure_zero(reader->key, sizeof(reader->key));
+    hls_secure_zero(reader->segment_iv, sizeof(reader->segment_iv));
     free(reader->transport);
     free(reader->playlist);
     memset(reader, 0, sizeof(*reader));
@@ -2917,6 +2952,29 @@ static int hls_stream_read(void *context, void *data, size_t capacity)
             return (int)copy;
         }
 
+        if (reader->encrypted_ready)
+        {
+            if (reader->encrypted_parse_at < reader->encrypted_size)
+            {
+                const size_t remaining = reader->encrypted_size - reader->encrypted_parse_at;
+                const size_t chunk = remaining < HLS_NETWORK_BUFFER_SIZE
+                                         ? remaining
+                                         : HLS_NETWORK_BUFFER_SIZE;
+                const radio_ts_aac_result_t parsed = radio_ts_aac_feed(
+                    reader->transport, reader->encrypted_segment + reader->encrypted_parse_at,
+                    chunk);
+                reader->encrypted_parse_at += chunk;
+                if (parsed != RADIO_TS_AAC_OK)
+                    return HLS_ERROR_TRANSPORT + (int)parsed;
+                continue;
+            }
+            reader->encrypted_ready = false;
+            reader->encrypted_size = 0U;
+            reader->encrypted_parse_at = 0U;
+            reader->next_sequence = reader->segment_sequence + 1U;
+            continue;
+        }
+
         if (reader->request < 0)
         {
             int segment = hls_find_segment(reader);
@@ -2932,15 +2990,57 @@ static int hls_stream_read(void *context, void *data, size_t capacity)
                     continue;
             }
             const radio_hls_segment_t *item = &reader->playlist->segments[segment];
+            const bool diagnose_segment = reader->diagnostic_segments_logged < 3U;
+            if (diagnose_segment)
+            {
+                ++reader->diagnostic_segments_logged;
+                fprintf(stderr,
+                        "[ProsperoRadio][playback] station=%s mode=hls phase=segment-open "
+                        "sequence=%llu encrypted=%u\n",
+                        reader->station_uuid, (unsigned long long)item->sequence,
+                        (unsigned)item->encrypted);
+            }
             if (item->discontinuity != 0U)
             {
                 radio_ts_aac_reset(reader->transport);
                 reader->discontinuity_pending = true;
             }
+            reader->segment_encrypted = item->encrypted != 0U;
+            if (reader->segment_encrypted)
+            {
+                hls_segment_iv(item, reader->segment_iv);
+                const int key_result = hls_fetch_key(item->key_url, reader->key);
+                if (key_result < 0)
+                {
+                    if (diagnose_segment)
+                        fprintf(stderr,
+                                "[ProsperoRadio][playback] station=%s mode=hls phase=key-fetch "
+                                "result=%d sequence=%llu\n",
+                                reader->station_uuid, key_result,
+                                (unsigned long long)item->sequence);
+                    return key_result;
+                }
+                if (reader->encrypted_segment == nullptr)
+                {
+                    reader->encrypted_segment = static_cast<uint8_t *>(
+                        malloc(HLS_ENCRYPTED_SEGMENT_MAX));
+                    if (reader->encrypted_segment == nullptr)
+                        return -1;
+                }
+                reader->encrypted_size = 0U;
+            }
             const int result =
                 http_open(item->url, true, "AAC", &reader->connection, &reader->request, nullptr);
             if (result < 0)
+            {
+                if (diagnose_segment)
+                    fprintf(stderr,
+                            "[ProsperoRadio][playback] station=%s mode=hls phase=segment-open "
+                            "result=%d sequence=%llu\n",
+                            reader->station_uuid, result,
+                            (unsigned long long)item->sequence);
                 return result;
+            }
             reader->segment_sequence = item->sequence;
             if (reader->discontinuity_pending)
                 continue;
@@ -2956,7 +3056,37 @@ static int hls_stream_read(void *context, void *data, size_t capacity)
         if (received == 0)
         {
             hls_request_close(reader);
-            reader->next_sequence = reader->segment_sequence + 1U;
+            if (reader->segment_encrypted)
+            {
+                if (reader->encrypted_size == 0U || (reader->encrypted_size & 15U) != 0U)
+                    return HLS_ERROR_PLAYLIST;
+                size_t plain_size = 0U;
+                const int decrypted = radio_aes128_cbc_decrypt(
+                    reader->encrypted_segment, reader->encrypted_size, reader->key,
+                    reader->segment_iv,
+                    &plain_size);
+                hls_secure_zero(reader->segment_iv, sizeof(reader->segment_iv));
+                hls_secure_zero(reader->key, sizeof(reader->key));
+                if (decrypted != 0 || plain_size == 0U)
+                    return HLS_ERROR_PLAYLIST;
+                reader->encrypted_size = plain_size;
+                reader->encrypted_parse_at = 0U;
+                reader->encrypted_ready = true;
+                reader->segment_encrypted = false;
+            }
+            else
+            {
+                reader->next_sequence = reader->segment_sequence + 1U;
+            }
+            continue;
+        }
+        if (reader->segment_encrypted)
+        {
+            const size_t amount = (size_t)received;
+            if (amount > HLS_ENCRYPTED_SEGMENT_MAX - reader->encrypted_size)
+                return HLS_ERROR_PLAYLIST;
+            memcpy(reader->encrypted_segment + reader->encrypted_size, reader->network, amount);
+            reader->encrypted_size += amount;
             continue;
         }
         reader->output_at = 0U;
@@ -2965,6 +3095,160 @@ static int hls_stream_read(void *context, void *data, size_t capacity)
             radio_ts_aac_feed(reader->transport, reader->network, (size_t)received);
         if (parsed != RADIO_TS_AAC_OK)
             return HLS_ERROR_TRANSPORT + (int)parsed;
+    }
+    return 0;
+}
+
+struct dash_reader_t
+{
+    radio_dash_manifest_t *manifest;
+    radio_dash_aac_config_t config;
+    uint8_t *segment;
+    uint8_t *output;
+    size_t output_at;
+    size_t output_size;
+    uint32_t next_segment;
+    uint32_t diagnostic_fragments_logged;
+};
+
+static int dash_read_resource(const char *url, uint8_t *buffer, size_t capacity, size_t *size)
+{
+    int connection = -1;
+    int request = -1;
+    const int opened = http_open(url, false, "AAC", &connection, &request, nullptr);
+    if (opened < 0)
+        return opened;
+    const int result = read_playlist_document(request, (char *)buffer, capacity, size);
+    playback_request_clear(request);
+    http_close(connection, request);
+    return SDL_AtomicGet(&g_stop_playback) ? 0 : result;
+}
+
+static int dash_reader_open(dash_reader_t *reader, const char *url)
+{
+    memset(reader, 0, sizeof(*reader));
+    reader->manifest = static_cast<radio_dash_manifest_t *>(malloc(sizeof(*reader->manifest)));
+    reader->segment = static_cast<uint8_t *>(malloc(DASH_SEGMENT_BUFFER_SIZE));
+    reader->output = static_cast<uint8_t *>(malloc(DASH_SEGMENT_BUFFER_SIZE));
+    auto *document = static_cast<char *>(malloc(DASH_DOCUMENT_BUFFER_SIZE));
+    auto *init_segment = static_cast<uint8_t *>(malloc(DASH_INIT_BUFFER_SIZE));
+    if (reader->manifest == nullptr || reader->segment == nullptr || reader->output == nullptr ||
+        document == nullptr || init_segment == nullptr)
+    {
+        free(document);
+        free(init_segment);
+        return -1;
+    }
+
+    size_t document_size = 0U;
+    int result = dash_read_resource(url, (uint8_t *)document, DASH_DOCUMENT_BUFFER_SIZE,
+                                    &document_size);
+    if (result >= 0 && !SDL_AtomicGet(&g_stop_playback))
+    {
+        const radio_dash_result_t parsed =
+            radio_dash_parse_mpd(document, document_size, url, reader->manifest);
+        if (parsed != RADIO_DASH_OK)
+            result = -2300 + (int)parsed;
+    }
+    size_t init_size = 0U;
+    if (result >= 0 && !SDL_AtomicGet(&g_stop_playback))
+    {
+        result = dash_read_resource(reader->manifest->initialization_url, init_segment,
+                                    DASH_INIT_BUFFER_SIZE, &init_size);
+        if (result >= 0)
+        {
+            const radio_dash_result_t configured =
+                radio_dash_parse_aac_init(init_segment, init_size, &reader->config);
+            if (configured != RADIO_DASH_OK)
+                result = -2310 + (int)configured;
+        }
+    }
+    memset(init_segment, 0, DASH_INIT_BUFFER_SIZE);
+    free(init_segment);
+    free(document);
+    if (result < 0 || SDL_AtomicGet(&g_stop_playback))
+        return result;
+    return reader->manifest->segment_count != 0U ? 0 : -2300;
+}
+
+static void dash_reader_close(dash_reader_t *reader)
+{
+    if (reader->segment != nullptr)
+    {
+        memset(reader->segment, 0, DASH_SEGMENT_BUFFER_SIZE);
+        free(reader->segment);
+    }
+    if (reader->output != nullptr)
+    {
+        memset(reader->output, 0, DASH_SEGMENT_BUFFER_SIZE);
+        free(reader->output);
+    }
+    free(reader->manifest);
+    memset(reader, 0, sizeof(*reader));
+}
+
+static int dash_stream_read(void *context, void *data, size_t capacity)
+{
+    auto *reader = static_cast<dash_reader_t *>(context);
+    while (!SDL_AtomicGet(&g_stop_playback))
+    {
+        if (reader->output_at < reader->output_size)
+        {
+            const size_t available = reader->output_size - reader->output_at;
+            const size_t amount = available < capacity ? available : capacity;
+            memcpy(data, reader->output + reader->output_at, amount);
+            reader->output_at += amount;
+            return (int)amount;
+        }
+        if (reader->next_segment >= reader->manifest->segment_count)
+            return 0;
+        size_t segment_size = 0U;
+        const bool diagnose_fragment = reader->diagnostic_fragments_logged < 3U;
+        if (diagnose_fragment)
+            fprintf(stderr, "[ProsperoRadio][playback] mode=dash phase=segment-read index=%u/%u\n",
+                    reader->next_segment + 1U, reader->manifest->segment_count);
+        const int fetched = dash_read_resource(reader->manifest->segment_urls[reader->next_segment],
+                                               reader->segment, DASH_SEGMENT_BUFFER_SIZE,
+                                               &segment_size);
+        if (fetched < 0)
+        {
+            if (diagnose_fragment)
+                fprintf(stderr,
+                        "[ProsperoRadio][playback] mode=dash phase=segment-read result=%d\n",
+                        fetched);
+            return fetched;
+        }
+        if (SDL_AtomicGet(&g_stop_playback))
+            return 0;
+        if (diagnose_fragment)
+        {
+            fprintf(stderr,
+                    "[ProsperoRadio][playback] mode=dash phase=fragment-convert-start "
+                    "index=%u bytes=%llu\n",
+                    reader->next_segment + 1U, (unsigned long long)segment_size);
+            ++reader->diagnostic_fragments_logged;
+        }
+        const radio_dash_result_t converted = radio_dash_fragment_to_adts(
+            reader->segment, segment_size, &reader->config, reader->output,
+            DASH_SEGMENT_BUFFER_SIZE, &reader->output_size);
+        if (converted != RADIO_DASH_OK)
+        {
+            if (diagnose_fragment)
+                fprintf(stderr,
+                        "[ProsperoRadio][playback] mode=dash phase=fragment-convert "
+                        "result=%d\n",
+                        (int)converted);
+            return -2320 + (int)converted;
+        }
+        if (diagnose_fragment)
+            fprintf(stderr,
+                    "[ProsperoRadio][playback] mode=dash phase=fragment-convert result=0 "
+                    "output=%llu\n",
+                    (unsigned long long)reader->output_size);
+        ++reader->next_segment;
+        reader->output_at = 0U;
+        if (reader->output_size == 0U)
+            continue;
     }
     return 0;
 }
@@ -3208,19 +3492,57 @@ static int play_stream(const radio_station_t *station, uint64_t *output_frames)
     const int mode =
         open_resolved_stream(station, &connection, &request, resolved_url, sizeof(resolved_url));
     if (mode < 0)
+    {
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s phase=source-resolve result=%d\n",
+                station->uuid, mode);
         return mode;
+    }
     set_playback_state(RADIO_PLAYBACK_BUFFERING, 0, 0, 0);
 
     if (mode == STREAM_OPEN_HLS)
     {
         hls_reader_t reader;
-        int result = hls_reader_open(&reader, resolved_url);
+        fprintf(stderr, "[ProsperoRadio][playback] station=%s mode=hls phase=reader-open\n",
+                station->uuid);
+        int result = hls_reader_open(&reader, resolved_url, station->uuid);
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s mode=hls phase=reader-open result=%d\n",
+                station->uuid, result);
         if (result >= 0 && !SDL_AtomicGet(&g_stop_playback))
         {
+            fprintf(stderr, "[ProsperoRadio][playback] station=%s mode=hls phase=decode-start\n",
+                    station->uuid);
             result = play_audiodec_reader(hls_stream_read, &reader, reader.source_channels, false,
                                           output_frames);
         }
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s mode=hls phase=decode result=%d "
+                "frames=%llu\n",
+                station->uuid, result, (unsigned long long)*output_frames);
         hls_reader_close(&reader);
+        return result;
+    }
+    if (mode == STREAM_OPEN_DASH)
+    {
+        dash_reader_t reader;
+        fprintf(stderr, "[ProsperoRadio][playback] station=%s mode=dash phase=reader-open\n",
+                station->uuid);
+        int result = dash_reader_open(&reader, resolved_url);
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s mode=dash phase=reader-open result=%d\n",
+                station->uuid, result);
+        if (result >= 0 && !SDL_AtomicGet(&g_stop_playback))
+        {
+            fprintf(stderr, "[ProsperoRadio][playback] station=%s mode=dash phase=decode-start\n",
+                    station->uuid);
+            result = play_audiodec_reader(dash_stream_read, &reader, 0U, false, output_frames);
+        }
+        fprintf(stderr,
+                "[ProsperoRadio][playback] station=%s mode=dash phase=decode result=%d "
+                "frames=%llu\n",
+                station->uuid, result, (unsigned long long)*output_frames);
+        dash_reader_close(&reader);
         return result;
     }
 
@@ -3236,6 +3558,8 @@ static int play_stream(const radio_station_t *station, uint64_t *output_frames)
         direct_context = &metadata_reader;
     }
     int result;
+    fprintf(stderr, "[ProsperoRadio][playback] station=%s mode=direct phase=decode-start\n",
+            station->uuid);
     if (strcasecmp(station->codec, "OPUS") == 0)
         result = play_opus_reader(direct_read, direct_context, output_frames);
     else if (strcasecmp(station->codec, "VORBIS") == 0)
@@ -3270,6 +3594,10 @@ static int play_stream(const radio_station_t *station, uint64_t *output_frames)
     }
     playback_request_clear(request);
     http_close(connection, request);
+    fprintf(stderr,
+            "[ProsperoRadio][playback] station=%s mode=direct codec=%s phase=decode "
+            "result=%d frames=%llu\n",
+            station->uuid, station->codec, result, (unsigned long long)*output_frames);
     return result;
 }
 
@@ -3278,10 +3606,22 @@ static void *playback_thread(void *station_copy)
     auto *station = static_cast<radio_station_t *>(station_copy);
     int result = -1;
     unsigned failures = 0U;
+    unsigned attempts = 0U;
+    uint64_t last_output_frames = 0U;
     for (;;)
     {
+        ++attempts;
+        fprintf(stderr,
+                "[ProsperoRadio][playback] attempt=%u station=%s codec=%s hls=%u phase=start\n",
+                attempts, station->uuid, station->codec, (unsigned)station->hls);
         uint64_t output_frames = 0U;
         result = play_stream(station, &output_frames);
+        last_output_frames = output_frames;
+        fprintf(stderr,
+                "[ProsperoRadio][playback] attempt=%u station=%s phase=end result=%d "
+                "frames=%llu stop=%u\n",
+                attempts, station->uuid, result, (unsigned long long)output_frames,
+                (unsigned)(SDL_AtomicGet(&g_stop_playback) || SDL_AtomicGet(&g_shutting_down)));
         if (result >= 0 || SDL_AtomicGet(&g_stop_playback) || SDL_AtomicGet(&g_shutting_down))
             break;
         const bool stable_playback = playback_retry_is_stable(output_frames, AUDIO_OUT_RATE);
@@ -3297,8 +3637,19 @@ static void *playback_thread(void *station_copy)
             SDL_Delay(25U);
         }
     }
+    const bool stop_requested = SDL_AtomicGet(&g_stop_playback) || SDL_AtomicGet(&g_shutting_down);
+    if (!stop_requested)
+    {
+        /* One bounded summary after retries are exhausted; never log stream
+         * URLs because M3U paths can contain short-lived access tokens. */
+        fprintf(stderr,
+                "[ProsperoRadio][playback] ended station=%s codec=%s hls=%u result=%d "
+                "frames=%llu retries=%u\n",
+                station->uuid, station->codec, (unsigned)station->hls, result,
+                (unsigned long long)last_output_frames, failures);
+    }
     free(station);
-    if (SDL_AtomicGet(&g_stop_playback) || SDL_AtomicGet(&g_shutting_down))
+    if (stop_requested)
     {
         set_playback_state(RADIO_PLAYBACK_STOPPED, 0, 0, 0);
     }

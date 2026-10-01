@@ -397,7 +397,7 @@ PY
 fi
 
 [[ -f $root/runtime/libc.prx ]] || bash "$root/tools/rebuild-libc.sh"
-(cd "$root/runtime" && sha256sum --check --strict libc.prx.sha256)
+(cd "$root/runtime" && tr -d '\r' < libc.prx.sha256 | sha256sum --check --strict)
 runtime_modules=("$root/runtime/libc.prx")
 additional_runtime=()
 [[ -z ${APP_RUNTIME_MODULES:-} ]] || read -r -a additional_runtime <<< "$APP_RUNTIME_MODULES"

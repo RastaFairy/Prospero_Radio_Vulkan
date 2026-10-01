@@ -14,7 +14,7 @@ expected_raw="8ee6e124993e1af26420cb455890fd002f5d6c7e78883c860ce45734e7d002bb"
 expected_signed="e6ff45d16adf687855cc3b33b0c8a4132b6504360b221e0a34c7e99fb3ba0036"
 manifest="$root/runtime/libc.prx.sha256"
 
-grep -Fxq "$expected_signed *libc.prx" "$manifest" || {
+grep -Fxq "$expected_signed *libc.prx" <(tr -d '\r' < "$manifest") || {
     echo "runtime checksum manifest does not match the release digest" >&2
     exit 2
 }
@@ -77,6 +77,6 @@ for artifact in "$work/libc-a.raw.elf" "$work/libc-a.prx"; do
 done
 
 cp "$work/libc-a.prx" "$root/runtime/libc.prx"
-(cd "$root/runtime" && sha256sum -c libc.prx.sha256)
+(cd "$root/runtime" && tr -d '\r' < libc.prx.sha256 | sha256sum -c --strict)
 printf 'Rebuilt clean-room runtime.\nRaw SHA-256:    %s\nSigned SHA-256: %s\n' \
     "$raw_hash" "$signed_hash"

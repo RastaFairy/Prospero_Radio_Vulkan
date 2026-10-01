@@ -10,7 +10,10 @@ enum radio_playlist_kind_t {
     RADIO_PLAYLIST_NONE = 0,
     RADIO_PLAYLIST_M3U,
     RADIO_PLAYLIST_PLS,
-    RADIO_PLAYLIST_HLS
+    RADIO_PLAYLIST_XSPF,
+    RADIO_PLAYLIST_ASX,
+    RADIO_PLAYLIST_HLS,
+    RADIO_PLAYLIST_DASH
 };
 
 enum radio_playlist_result_t {

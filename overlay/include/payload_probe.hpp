@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <cstddef>
+
 enum radio_payload_file_t
 {
     RADIO_PAYLOAD_CATALOG = 1,
@@ -14,6 +16,19 @@ enum radio_payload_file_t
     RADIO_PAYLOAD_AUXLIST = 6,
     RADIO_PAYLOAD_AUXFAVORITES = 7
 };
+
+enum radio_aux_playlist_format_t
+{
+    RADIO_AUX_FORMAT_AUTO = 0,
+    RADIO_AUX_FORMAT_M3U = 1,
+    RADIO_AUX_FORMAT_M3U8 = 2,
+    RADIO_AUX_FORMAT_PLS = 3,
+    RADIO_AUX_FORMAT_XSPF = 4,
+    RADIO_AUX_FORMAT_ASX = 5
+};
+
+#define RADIO_AUX_PLAYLIST_MAX_BYTES (4U * 1024U * 1024U)
+#define RADIO_AUX_PLAYLIST_ENVELOPE_BYTES 9U
 
 // Starts the bundled payload through elfldr and verifies its loopback service.
 bool radio_payload_bridge_start();
@@ -28,6 +43,9 @@ bool radio_payload_bridge_keepalive();
 bool radio_payload_bridge_aux_start();
 bool radio_payload_bridge_aux_stop();
 bool radio_payload_bridge_aux_running();
-// Pull the latest M3U from /data/radio into /download0 for the app to process.
-bool radio_payload_bridge_fetch_aux();
+// Move the AUX document directly between /data/radio and caller-owned memory.
+bool radio_payload_bridge_fetch_aux_buffer(void *buffer, std::size_t capacity, std::size_t *size,
+                                           unsigned char *format, bool *not_found);
+bool radio_payload_bridge_store_aux_buffer(const void *buffer, std::size_t size,
+                                           unsigned char format);
 void radio_payload_bridge_shutdown();

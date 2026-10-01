@@ -293,7 +293,6 @@ body {
 #discover-panel.hidden,
 #now-panel.hidden,
 #search-overlay.hidden,
-#settings-overlay.hidden,
 #credits-overlay.hidden {
     display: none;
 }
@@ -601,7 +600,7 @@ body {
 .discover-button-1 { left: 355px; }
 .discover-button-2 { left: 610px; }
 
-/* Search, settings and credits sit inside the radio's glass display. */
+/* Search and credits sit inside the radio's glass display. */
 .overlay {
     z-index: 30;
     background-color: transparent;
@@ -744,12 +743,7 @@ body {
     line-height: 21px;
 }
 
-/* Settings stays inside the radio's glass display so the physical backplate remains visible. */
-#settings-overlay {
-    background-color: transparent;
-    z-index: 40;
-}
-.settings-kicker {
+.search-kicker {
     position: absolute;
     left: 20px;
     top: 12px;
@@ -759,7 +753,7 @@ body {
     font-size: 16px;
     line-height: 20px;
 }
-.settings-title {
+.search-title {
     position: absolute;
     left: 20px;
     top: 34px;
@@ -769,134 +763,7 @@ body {
     font-size: 23px;
     line-height: 28px;
 }
-.settings-current-list {
-    position: absolute;
-    left: 430px;
-    top: 15px;
-    width: 330px;
-    height: 24px;
-    overflow: hidden;
-    color: #e2a658;
-    font-size: 16px;
-    line-height: 21px;
-    text-align: right;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-.settings-station-count {
-    position: absolute;
-    left: 430px;
-    top: 39px;
-    width: 330px;
-    height: 20px;
-    color: #bc7e39;
-    font-size: 14px;
-    line-height: 18px;
-    text-align: right;
-}
-.settings-theme-row {
-    position: absolute;
-    left: 18px;
-    top: 58px;
-    width: 812px;
-    height: 38px;
-    border: 1px #68492d;
-    background-color: #382719;
-}
-.settings-theme-row.focused {
-    border: 2px #f4be76;
-    background-color: #50351d;
-}
-.settings-theme-label {
-    position: absolute;
-    left: 12px;
-    top: 9px;
-    width: 190px;
-    height: 23px;
-    color: #e2a658;
-    font-size: 16px;
-    line-height: 21px;
-}
-.settings-theme-value {
-    position: absolute;
-    left: 210px;
-    top: 9px;
-    width: 160px;
-    height: 23px;
-    color: #f4be76;
-    font-size: 16px;
-    line-height: 21px;
-}
-.settings-theme-help {
-    position: absolute;
-    left: 420px;
-    top: 9px;
-    width: 250px;
-    height: 23px;
-    color: #bc7e39;
-    font-size: 14px;
-    line-height: 21px;
-    text-align: right;
-}
-.settings-volume-row {
-    position: absolute;
-    left: 18px;
-    top: 102px;
-    width: 812px;
-    height: 38px;
-    border: 1px #68492d;
-    background-color: #382719;
-}
-.settings-volume-label {
-    position: absolute;
-    left: 12px;
-    top: 9px;
-    width: 170px;
-    height: 23px;
-    color: #e2a658;
-    font-size: 16px;
-    line-height: 21px;
-}
-.settings-volume-value {
-    position: absolute;
-    left: 190px;
-    top: 9px;
-    width: 64px;
-    height: 23px;
-    color: #f4be76;
-    font-size: 16px;
-    line-height: 21px;
-    text-align: right;
-}
-.settings-volume-meter {
-    position: absolute;
-    left: 270px;
-    top: 14px;
-    width: 260px;
-    height: 10px;
-    border: 1px #68492d;
-    background-color: #1c120b;
-}
-#settings-volume-fill {
-    position: absolute;
-    left: 0px;
-    top: 0px;
-    width: 328px;
-    height: 8px;
-    background-color: #e2a658;
-}
-.settings-volume-help {
-    position: absolute;
-    left: 540px;
-    top: 9px;
-    width: 190px;
-    height: 23px;
-    color: #bc7e39;
-    font-size: 14px;
-    line-height: 21px;
-    text-align: right;
-}
-.settings-action {
+.search-action {
     position: absolute;
     top: 148px;
     width: 394px;
@@ -905,9 +772,7 @@ body {
     background-color: #382719;
     color: #f4be76;
 }
-.settings-favorites { left: 20px; }
-.settings-refresh { left: 438px; }
-.settings-action-title {
+.search-action-title {
     position: absolute;
     left: 10px;
     top: 4px;
@@ -917,24 +782,11 @@ body {
     font-size: 16px;
     line-height: 20px;
 }
-.settings-action-detail {
-    position: absolute;
-    right: 10px;
-    top: 4px;
-    width: 128px;
-    height: 21px;
-    overflow: hidden;
-    color: #bc7e39;
-    font-size: 14px;
-    line-height: 20px;
-    text-align: right;
-    text-overflow: ellipsis;
-}
-.settings-action.focused {
+.search-action.focused {
     border: 2px #f4be76;
     background-color: #50351d;
 }
-.settings-controls {
+.search-controls {
     position: absolute;
     left: 18px;
     top: 194px;
@@ -978,22 +830,12 @@ body {
     background-color: #e2a658;
     color: #24170e;
 }
-.settings-action:focus {
+.search-action:focus {
     border: 2px #f4be76;
     background-color: #50351d;
 }
 
-/* Stacked cabinet finishes and the control-atlas layer (manifest-hybrid.json). */
-#radio-backdrop-silver,
-#radio-backdrop-graphite {
-    position: absolute;
-    left: 0px;
-    top: 0px;
-    width: 1920px;
-    height: 1080px;
-    z-index: 1; /* above the KTX hybrid so they cover it when loaded */
-}
-.backdrop-hidden { visibility: hidden; }
+/* Control-atlas layer (manifest-hybrid.json). */
 #controls-layer {
     position: absolute;
     left: 0px;
@@ -1038,11 +880,6 @@ body {
 }
 #home-status.warning { color: #e2a658; }
 #home-status.error { color: #d56b65; }
-.jack-status {
-    position: absolute; left: 414px; top: 8px; width: 180px; height: 18px;
-    color: #806b54; font-size: 12px; line-height: 16px; text-align: center;
-}
-.jack-status.connected { color: #f4be76; }
 #home-hint {
     position: absolute; left: 8px; top: 202px; width: 620px; height: 22px;
     color: #bc7e39; font-size: 14px; line-height: 20px;
@@ -1075,16 +912,16 @@ body {
     white-space: nowrap; overflow: hidden;
 }
 #list-title { visibility: hidden; }
-#list-tabs { position: absolute; left: 8px; top: 3px; width: 510px; height: 24px; }
+#list-tabs { position: absolute; left: 8px; top: 3px; width: 510px; height: 24px; overflow: hidden; }
 .list-tab {
     position: absolute; top: 0px; height: 22px; padding: 1px 9px;
     border: 1px #68492d; border-radius: 4px; color: #a97943;
     font-size: 13px; line-height: 18px; text-align: center;
     white-space: nowrap;
 }
-#list-tab-radio { left: 0px; width: 112px; }
-#list-tab-favorites { left: 118px; width: 178px; }
-#list-tab-aux { left: 302px; width: 112px; }
+#list-tab-radio { left: 0px; width: 104px; }
+#list-tab-favorites { left: 128px; width: 142px; }
+#list-tab-aux { left: 294px; width: 112px; }
 .list-tab.active {
     border: 1px #f4be76; background-color: #50351d; color: #ffe2ad;
     font-weight: bold;
@@ -1121,6 +958,12 @@ body {
     color: #f4be76; font-size: 15px; line-height: 21px;
     text-align: center;
 }
+.list-delete-countdown {
+    position: absolute; left: 466px; top: 1px; width: 374px; height: 22px;
+    padding-right: 6px; background-color: #39230f; color: #ffd28a;
+    font-size: 13px; line-height: 21px; text-align: right;
+    white-space: nowrap; overflow: hidden;
+}
 .list-count {
     position: absolute; left: 770px; top: 2px; width: 90px; height: 21px;
     color: #bc7e39; font-size: 15px; line-height: 21px; text-align: right;
@@ -1145,16 +988,10 @@ body {
 #search-apply { position: absolute; left: 20px; top: 178px; width: 812px; height: 42px; }
 
 /* Glass surfaces: exactly one visible at a time (01.000.025). */
-#screen-home, #screen-list, #screen-genres,
-#settings-panel, #search-panel {
+#screen-home, #screen-list, #screen-genres, #search-panel {
     position: absolute; left: 0px; top: 0px;
     width: 888px; height: 228px; overflow: hidden;
     z-index: 10;
-}
-#settings-panel {
-    left: 8px; top: 4px; width: 872px; height: 220px;
-    border: 2px #8a6a3c; border-radius: 10px;
-    background-color: #2b1d13;
 }
 #search-panel { background-color: transparent; }
 .hidden { visibility: hidden; }
@@ -1205,11 +1042,28 @@ body {
 .chip { display: block; }
 .filter-1, .filter-3 { display: block; }
 .search-match { color: #f4be76; }
-.eqband {
-    position: absolute; top: 76px; width: 158px; height: 58px;
-    border: 1px #57452c; border-radius: 6px; color: #e2a658;
-    font-size: 17px; line-height: 56px; text-align: center;
+.eq-control {
+    position: absolute; top: 30px; width: 48px; height: 150px;
+    border: 1px #57452c; border-radius: 4px; color: #e2a658;
 }
-#eqband-0 { left: 10px; } #eqband-1 { left: 186px; } #eqband-2 { left: 362px; }
-#eqband-3 { left: 538px; } #eqband-4 { left: 714px; }
-.eqband.selected { border: 2px #f4be76; color: #f4be76; }
+.eq-channel { width: 64px; border-color: #8a6338; background-color: #24180f; }
+#eqband-0 { left: 10px; }  #eqband-1 { left: 67px; }
+#eqband-2 { left: 124px; } #eqband-3 { left: 181px; }
+#eqband-4 { left: 238px; } #eqband-5 { left: 295px; }
+#eqband-6 { left: 352px; } #eqband-7 { left: 409px; }
+#eqband-8 { left: 466px; } #eqband-9 { left: 523px; }
+#eqband-10 { left: 580px; } #eqband-11 { left: 637px; }
+#eqband-12 { left: 705px; } #eqband-13 { left: 785px; }
+.eq-label, .eq-value { position: absolute; left: 0px; width: 100%; text-align: center; }
+.eq-label { top: 3px; height: 18px; color: #f4be76; font-size: 10px; line-height: 16px; white-space: nowrap; }
+.eq-value { top: 128px; height: 17px; color: #e2a658; font-size: 12px; line-height: 15px; }
+.eq-track {
+    position: absolute; left: 18px; top: 24px; width: 12px; height: 100px;
+    border: 1px #68492d; background-color: #120d09;
+}
+.eq-channel .eq-track { left: 25px; }
+.eq-zero { position: absolute; left: 0px; top: 49px; width: 100%; height: 2px; background-color: #8a7150; }
+.eq-fill { position: absolute; left: 0px; top: 49px; width: 100%; height: 2px; background-color: #ffc56d; }
+.eqband.selected { border: 2px #ffc56d; color: #fff0d1; background-color: #382719; }
+.eqband.selected .eq-value, .eqband.selected .eq-label { color: #fff0d1; }
+#eq-help { top: 194px; height: 20px; font-size: 14px; line-height: 18px; text-align: center; }
