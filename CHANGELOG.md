@@ -1,10 +1,9 @@
-# Registro de cambios — ProsperoRadio Vulkan Edition
+# Registro de cambios — Prospero Radio Vulkan
 
-> **Build 01.000.046** · paquete generado, gate aprobado y observación en PS5 comunicada por el usuario.
-> La prueba confirma el comportamiento observado de esta build, no la compatibilidad de todos los protocolos.
+> **Build 02.000.055** · compilación y gate local aprobados; prueba en PS5 pendiente.
 >
 > No confundir: *2.2.1* es la versión del paquete de interfaz original sobre el que se
-> construye este fork; *01.000.0XX* es la `contentVersion` que ve la consola en
+> construye este fork; *02.000.0XX* es la `contentVersion` que ve la consola en
 > `sce_sys/param.json` (la fija `overlay/apply-vulkan.py` en cada build).
 >
 > El flujo de compilación y sus límites se describen en
@@ -12,6 +11,117 @@
 > están en [`docs/PENDIENTES.md`](docs/PENDIENTES.md).
 
 ---
+
+## 02.000.055 — 2026-10-04 · robustez bridge, detección de medios y cola AUX
+
+- **CD/USB:** conserva el último índice válido ante respuestas incompletas o errores;
+  valida estados, recuentos e IDs duplicados; detiene la reproducción al confirmar
+  que el medio ya no está disponible.
+- **Bridge:** aplica espera creciente al reconectar; el ping tiene un límite de dos
+  segundos y el sondeo periódico es más frecuente. La sincronización inicial reintenta
+  una vez y trata los archivos inexistentes en una instalación nueva como estado
+  inicial válido.
+- **AUX HTTP:** importaciones en cola acotada, ejecutadas fuera del bucle RPC, con
+  escritura en un temporal distinto al usado por RPC. Se rechazan longitudes HTTP
+  duplicadas y Transfer-Encoding.
+- **Bridge (montajes/listener):** conserva constancia de montajes propios cuya
+  liberación falla; reintenta abrir el listener USB si no pudo iniciarlo. Los
+  tamaños de registro CD/USB están declarados en sus cabeceras de protocolo.
+- Cambios validados mediante revisión estática únicamente (Luna 6); no compilados
+  ni ejecutados en PS5 en la sesión anterior.
+- **Limitaciones conocidas:** si la sincronización inicial falla tras los dos intentos,
+  la sesión continúa con caché local o valores predeterminados (sin recarga SQLite en
+  caliente). WMA/M4A no incluidos en estos cambios.
+## 02.000.054 — 2026-10-03 · parada al volver a radio y etiqueta de archivos
+
+- Al bajar desde el foco CD, la app solicita detener una reproducción iniciada
+  desde el disco y cancela una transición de pista pendiente. La pantalla CD
+  queda en reposo; falta confirmar en PS5 que el audio se detenga en esa transición.
+- Al recuperar una emisora guardada en P1/P2/P3, la app abandona también el
+  foco CD, duerme su pantalla y deja que el LCD canónico muestre la emisora.
+  `RefreshHome()` podía devolver antes de pintar la emisora porque el foco CD
+  seguía activo aunque `RecallPreset()` ya hubiera seleccionado otra fuente.
+- Los elementos de discos de datos se etiquetan como `FILE`/`AUDIO FILES`; los
+  CD-DA se mantienen como pistas, y discos mixtos se muestran como elementos
+  de audio. El registro `.053` halló 256 archivos en el DVD y catalogó 34 como
+  reproducibles (tipo MP3); no alcanzó el límite de 128 entradas. El log no
+  clasifica los otros 222 por extensión, y WMA/M4A siguen sin decodificador.
+- Build FFPFSC `PPSA99001` en
+  `out/prospero-radio-02.000.054-ppsa-cd-usb-final/`: 50.135.040 bytes,
+  SHA-256 `3066C1D729B6DF3C0306AF3561EE2DB89D026887B5CE0D036E01322BE6AF5875`.
+  `eboot.bin`: 27.316.348 bytes, SHA-256
+  `4B4285E5DCB492A913E59F07D56DD63F2D5190FC91FA1838F085358D9E8B2B0E`.
+  `ProsperoRadioDataBridge.elf`: 194.120 bytes, SHA-256
+  `5396BCF468B140C09CF4E79893DF9731A792D9A7755C5A4353EABC168AA8F0F6`.
+- `param.json`, RML y banner runtime indican `02.000.054`; Title ID `PPSA99001`.
+  El gate pasó 15 comprobaciones, 0 avisos y 0 fallos. MkPFS verificó la imagen
+  con 0 avisos y 0 errores. No se ejecutaron pruebas independientes ni se ha
+  validado esta build en PS5.
+
+## 02.000.053 — 2026-10-03 · límites de pila para lectura óptica
+
+- El hilo óptico del payload configura una pila de 512 KiB mediante
+  `pthread_attr_setstacksize`; el ELF compilado contiene la llamada y el mensaje
+  de inicio que informa del tamaño. La medida aborda el crash de UDF observado
+  en la .052, cuyo fault de escritura cayó en la pila durante el escaneo. Es una
+  mitigación basada en la ruta observada; falta repetir el DVD en PS5 para
+  confirmar que evita el crash.
+- La lista UDF conserva los tipos que el lector ya reconoce: MP3, AAC/ADTS,
+  FLAC y WAV. WMA y M4A/MP4A siguen sin decodificador integrado; no se anuncian
+  como reproducibles.
+- Build FFPFSC `PPSA99001` en
+  `out/prospero-radio-02.000.053-ppsa-cd-usb-final/`: 50.135.040 bytes,
+  SHA-256 `B41AC022F72D646611968AEDDC98C87BF3C07245CC32809FF84862E8F327DDF9`.
+  `eboot.bin`: 27.315.180 bytes, SHA-256
+  `01F0200DF5659230C1D75A55B5CDDA8467FB58443D34F8AB9541BB0070D45A7E`.
+  `ProsperoRadioDataBridge.elf`: 194.120 bytes, SHA-256
+  `5396BCF468B140C09CF4E79893DF9731A792D9A7755C5A4353EABC168AA8F0F6`.
+- `param.json`, versión visible en RML y banner runtime indican `02.000.053`.
+  El gate del paquete pasó 15 comprobaciones, 0 avisos y 0 fallos; MkPFS
+  verificó la imagen con 0 avisos y 0 errores. No se ejecutaron pruebas
+  independientes ni se ha validado esta build en PS5.
+
+## 02.000.052 — 2026-10-03 · soporte de DVD/UDF y marca del proyecto
+
+- La app integra la lista de archivos de audio que expone el payload para la
+  unidad óptica externa `cd1`, con reproducción de archivos indexados desde
+  UDF mediante el flujo HTTP de solo lectura. La compilación confirma que el
+  payload y la app se enlazan; el funcionamiento en PS5 sigue pendiente.
+- El paquete toma `icon0.png`, `pic0.dds` y `pic1.dds` de `nuevas_imagenes/`;
+  sus hashes coinciden con los tres recursos incluidos. El `titleName` y el
+  título RML pasan a **Prospero Radio Vulkan**. Se conserva `PPSA99001`.
+- Build FFPFSC en
+  `out/prospero-radio-02.000.052-ppsa-cd-usb-final/`: 50.135.040 bytes,
+  SHA-256 `4585EDF9AE2A25066BF82667B76132D6605E2D3D07424E91DAA7D569844A1F92`.
+  `eboot.bin`: 27.314.252 bytes, SHA-256
+  `3F19825EB6A446826F62E008331FB1B64C72CBBE0AC8DB5F281A4BC15A10EFB8`.
+- `param.json`, versión visible en RML y banner runtime coinciden en
+  `02.000.052`. El gate del paquete pasó 15 comprobaciones, 0 avisos y 0
+  fallos; MkPFS verificó la imagen con 0 avisos y 0 errores. No se ejecutaron
+  pruebas ni se validó esta build en PS5.
+
+## 02.000.050 — 2026-10-02 · interfaz CD y lógica de controles
+
+- La propuesta CD se integra en una superficie superior que aparece solo cuando
+  se detecta `cd1`. Se eliminan los botones SCAN/PREV/NEXT/STOP del panel superior;
+  la franja inferior conserva su atlas `buttons.tga` de la build v049 (SHA-256
+  `076B05D06DAFC1C23A9B39FC4023266AF0D22B15D1DF6ED126F34402C4D3904E`). El
+  usuario indicó que los botones del último preview no son los canónicos; la
+  correspondencia visual no queda validada aunque el atlas coincida.
+- La animación pasa a un icono ámbar dentro de la pantalla LCD, con doce cuadros
+  TGA independientes y carga diferida para `cd1`; no usa la tira brillante que
+  desbordaba sobre la lista y el estado.
+- La cruceta arriba/abajo alterna el foco entre las superficies; izquierda/derecha
+  conserva el recorrido de los controles inferiores. Las acciones de CD usan los
+  controles inferiores contextualizados y la selección del disco. Queda pendiente
+  cotejar su resultado con los controles canónicos esperados y probarlo en PS5.
+- Build `PPSA99001` compilada en
+  `out/prospero-radio-02.000.050-ppsa-cd-controls/`: FFPFSC de 52.953.088 bytes,
+  SHA-256 `E519F3DFA3C8F94D00666DF71BC179B3E972C37EF5165749FD7AB2656D0C264A`;
+  `eboot.bin` SHA-256
+  `BA1F3884E1708B8D665EE2E899BE981E26A46A4AFD7229FF124950BB1A69D886`.
+  `param.json`, RML y banner indican `02.000.050`; el gate pasó 14 checks, 0
+  avisos y 0 fallos. La build de consola aún no está validada por el usuario.
 
 ## 01.000.046 — 2026-10-01 · versión canónica de la build comprobada
 

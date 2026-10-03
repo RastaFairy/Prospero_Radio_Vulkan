@@ -12,7 +12,7 @@ from console_ux_patch import patch_console_ux
 
 UPSTREAM_SHA = "33898dd35375c1ae8370da137cfb6941d91c7684"
 UPSTREAM_SHA_CURRENT = "c0643ed66212a57819e04577d14528ba8238f197"  # v01.000.023 (allow this too)
-VERSION = "01.000.046"
+VERSION = "02.000.055"
 
 # Fork of the boilerplate allocation runtime (overlay/src/app_cpp_runtime.cpp).
 # 01.000.016 redirected title stderr into /download0/prospero-radio.log and gave
