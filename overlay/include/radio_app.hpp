@@ -38,7 +38,7 @@ private:
         Eq,       // equalizer surface
     };
 
-    enum class ListKind { Radio, Favorites, Auxiliary };
+    enum class ListKind { Radio, Favorites, Auxiliary, Usb };
 
     static constexpr unsigned ButtonCount = 7;
     static constexpr unsigned ListRows = 7;
@@ -47,6 +47,9 @@ private:
     Rml::ElementDocument* document_ = nullptr;
     bool service_started_ = false;
     unsigned long long payload_keepalive_tick_ = 0;
+    unsigned long long media_index_refresh_tick_ = 0;
+    unsigned long long usb_index_refresh_tick_ = 0;
+    bool payload_bridge_was_ready_ = false;
     bool have_last_status_ = false;
     radio_service_status_t last_status_{};
 
@@ -59,8 +62,27 @@ private:
     unsigned list_total_ = 0;
     unsigned list_indices_[ListRows]{};
     bool list_aux_entries_[ListRows]{};
+    bool list_usb_entries_[ListRows]{};
     std::vector<radio_station_t> aux_stations_;
     std::vector<radio_station_t> aux_favorites_;
+    std::vector<radio_station_t> usb_stations_;
+    std::vector<radio_station_t> disc_stations_;
+    bool disc_device_available_ = false;
+    bool disc_media_present_ = false;
+    bool disc_index_error_ = false;
+    bool disc_index_pending_ = false;
+    unsigned long long disc_index_poll_tick_ = 0;
+    bool usb_device_available_ = false;
+    bool usb_index_error_ = false;
+    bool usb_index_pending_ = false;
+    unsigned long long usb_index_poll_tick_ = 0;
+    bool disc_focus_active_ = false;
+    bool disc_focus_initialized_ = false;
+    bool disc_stack_loaded_ = false;
+    bool disc_frame_loaded_ = false;
+    unsigned disc_selected_index_ = 0;
+    unsigned disc_animation_frame_ = 0;
+    unsigned long long disc_animation_tick_ = 0;
     bool aux_delete_hold_active_ = false;
     char aux_delete_hold_uuid_[40]{};
     unsigned long long aux_delete_hold_start_ = 0;
@@ -81,6 +103,7 @@ private:
     radio_station_t preset_external_station_[3]{};
     radio_station_t tuned_station_{};
     bool tuned_station_valid_ = false;
+    bool tuned_is_disc_ = false;
     int preset_active_ = -1;          /* zone currently tuned from, -1 = free */
     bool touch_hold_active_ = false;
     bool touch_fired_ = false;
@@ -112,6 +135,7 @@ private:
     radio_station_t pending_play_station_{};
     bool pending_play_external_ = false;
     bool tuned_is_aux_ = false;
+    bool tuned_is_usb_ = false;
     int preset_confirm_zone_ = -1;
     unsigned long long preset_confirm_until_ = 0;
 
@@ -151,6 +175,15 @@ private:
     void TuneStation(int direction);
     void PlayIndex(unsigned index);
     void PlayAuxStation(const radio_station_t &station);
+    void PlayUsbStation(const radio_station_t &station);
+    void PlayDiscStation(const radio_station_t &station);
+    void StopUsbPlaybackIfUnavailable();
+    void StopDiscPlaybackIfUnavailable();
+    bool FetchDiscIndex(bool force_refresh = false);
+    bool FetchUsbIndex(bool force_refresh = false);
+    void UpdateDiscPresentation();
+    void RefreshDiscScreen();
+    void ChangeDiscSelection(int direction);
     unsigned ScanAuxPlaylist(const unsigned char *data, std::size_t size,
                              unsigned char format);
     void ToggleFavoriteOnTuned();

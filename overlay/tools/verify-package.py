@@ -219,12 +219,43 @@ def check_rml(pkg: Path, overlay: Path, report: Report) -> None:
     else:
         report.ok("rml", "21 volume frames stacked")
 
-    sources = [element.get("src") for element in root.iter() if element.get("src")]
+    sources = [
+        element.get(attribute)
+        for element in root.iter()
+        for attribute in ("src", "data-radio-src", "data-cd-src")
+        if element.get(attribute)
+    ]
+    app_src = (overlay / "src/radio_app.cpp").read_text(encoding="utf-8")
+    sources.extend(
+        re.findall(r'SetAttribute\(\s*"src"\s*,\s*Rml::String\("([^"]+)"\)', app_src)
+    )
+    frame_count = re.search(r"constexpr unsigned kDiscFrameCount = (\d+);", app_src)
+    frame_source = re.search(
+        r'snprintf\(source,\s*sizeof\(source\),\s*'
+        r'"art/cd_disc_frame_%02u\.tga",\s*index\)',
+        app_src,
+    )
+    expected_indices = {f"{index:02d}" for index in range(12)}
+    packaged_frame_ids = {
+        match.group(1)
+        for match in re.finditer(r'id="cd-disc-icon-(\d{2})"', rml)
+    }
+    if (frame_count is None or int(frame_count.group(1)) != 12 or frame_source is None or
+            packaged_frame_ids != expected_indices):
+        report.fail(
+            "rml",
+            "CD animation must define 12 RML frame elements and a matching indexed TGA source",
+        )
+        disc_frames = []
+    else:
+        disc_frames = [f"art/cd_disc_frame_{index:02d}.tga" for index in range(12)]
+        report.ok("rml", "12 individual CD animation frames referenced by RML and C++")
+    sources.extend(disc_frames)
     absent = [src for src in sources if not (pkg / "assets/ui" / src).is_file()]
     if absent:
         report.fail("rml", f"<img> sources missing in package: {absent[:4]}")
     else:
-        report.ok("rml", f"all {len(sources)} <img> sources packaged")
+        report.ok("rml", f"all {len(sources)} static and dynamic image sources packaged")
 
 
 def check_css(pkg: Path, overlay: Path, report: Report) -> None:

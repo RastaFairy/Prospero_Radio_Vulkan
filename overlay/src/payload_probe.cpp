@@ -53,7 +53,9 @@ enum BridgeOp : unsigned char
     kStopAux = 7,
     kAttach = 8,
     kGetAuxBuffer = 9,
-    kPutAuxBuffer = 10
+    kPutAuxBuffer = 10,
+    kGetDiscIndex = 11,
+    kGetUsbIndex = 12
 };
 
 enum BridgeStatus : unsigned char
@@ -73,6 +75,9 @@ std::atomic<bool> g_bridge_ready{false};
 std::atomic<bool> g_report_file_unavailable{false};
 std::mutex g_bridge_mutex;
 int g_bridge_socket = -1;
+std::time_t g_bridge_retry_after = 0;
+unsigned g_bridge_retry_seconds = 3U;
+bool g_bridge_retry_failure_reported = false;
 
 FileSpec GetFileSpec(radio_payload_file_t file)
 {
@@ -182,12 +187,14 @@ int BridgeChannel()
 
 void CloseBridgeChannel()
 {
+    const bool was_ready = g_bridge_ready.exchange(false);
     if (g_bridge_socket >= 0)
     {
         close(g_bridge_socket);
         g_bridge_socket = -1;
     }
-    g_bridge_ready.store(false);
+    if (was_ready && g_bridge_retry_after <= std::time(nullptr))
+        g_bridge_retry_after = std::time(nullptr) + g_bridge_retry_seconds;
 }
 
 void WriteU32Be(unsigned char *data, std::uint32_t value)
@@ -237,6 +244,11 @@ bool PingBridge()
     const int socket_fd = BridgeChannel();
     if (socket_fd < 0)
         return false;
+    const timeval ping_timeout{2, 0};
+    (void)setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &ping_timeout,
+                     sizeof(ping_timeout));
+    (void)setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &ping_timeout,
+                     sizeof(ping_timeout));
     BridgeStatus status{};
     std::uint32_t response_size = 0;
     const bool ok = SendRequestHeader(socket_fd, kPing, 0, 0) &&
@@ -244,6 +256,14 @@ bool PingBridge()
                     status == kBridgeOk && response_size == 0;
     if (!ok)
         CloseBridgeChannel();
+    else
+    {
+        const timeval transfer_timeout{10, 0};
+        (void)setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &transfer_timeout,
+                         sizeof(transfer_timeout));
+        (void)setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &transfer_timeout,
+                         sizeof(transfer_timeout));
+    }
     return ok;
 }
 
@@ -584,6 +604,94 @@ bool PutRemoteAuxBuffer(const void *buffer, std::size_t size, unsigned char form
     return ok;
 }
 
+bool GetRemoteDiscIndex(void *buffer, std::size_t capacity, std::size_t *size,
+                        bool force_refresh)
+{
+    if (buffer == nullptr || size == nullptr || capacity < RADIO_DISC_INDEX_MAX_BYTES)
+        return false;
+    *size = 0U;
+    const int socket_fd = BridgeChannel();
+    if (socket_fd < 0)
+        return false;
+
+    BridgeStatus status{};
+    std::uint32_t remaining = 0U;
+    if (!SendRequestHeader(socket_fd, kGetDiscIndex, force_refresh ? 1U : 0U, 0U) ||
+        !ReceiveResponseHeader(socket_fd, &status, &remaining))
+    {
+        CloseBridgeChannel();
+        return false;
+    }
+    if (status != kBridgeOk)
+        return false;
+    if (remaining > capacity || remaining > RADIO_DISC_INDEX_MAX_BYTES)
+    {
+        CloseBridgeChannel();
+        return false;
+    }
+
+    auto *bytes = static_cast<unsigned char *>(buffer);
+    std::size_t offset = 0U;
+    while (remaining > 0U)
+    {
+        const std::size_t chunk = remaining < kTransferChunk ? remaining : kTransferChunk;
+        if (!ReceiveAll(socket_fd, bytes + offset, chunk))
+        {
+            CloseBridgeChannel();
+            return false;
+        }
+        remaining -= static_cast<std::uint32_t>(chunk);
+        offset += chunk;
+    }
+    *size = offset;
+    Report("CD optical-disc index received bytes=%u", static_cast<unsigned>(offset));
+    return true;
+}
+
+bool GetRemoteUsbIndex(void *buffer, std::size_t capacity, std::size_t *size,
+                       bool force_refresh)
+{
+    if (buffer == nullptr || size == nullptr || capacity < RADIO_USB_INDEX_MAX_BYTES)
+        return false;
+    *size = 0U;
+    const int socket_fd = BridgeChannel();
+    if (socket_fd < 0)
+        return false;
+
+    BridgeStatus status{};
+    std::uint32_t remaining = 0U;
+    if (!SendRequestHeader(socket_fd, kGetUsbIndex, force_refresh ? 1U : 0U, 0U) ||
+        !ReceiveResponseHeader(socket_fd, &status, &remaining))
+    {
+        CloseBridgeChannel();
+        return false;
+    }
+    if (status != kBridgeOk)
+        return false;
+    if (remaining > capacity || remaining > RADIO_USB_INDEX_MAX_BYTES)
+    {
+        CloseBridgeChannel();
+        return false;
+    }
+
+    auto *bytes = static_cast<unsigned char *>(buffer);
+    std::size_t offset = 0U;
+    while (remaining > 0U)
+    {
+        const std::size_t chunk = remaining < kTransferChunk ? remaining : kTransferChunk;
+        if (!ReceiveAll(socket_fd, bytes + offset, chunk))
+        {
+            CloseBridgeChannel();
+            return false;
+        }
+        remaining -= static_cast<std::uint32_t>(chunk);
+        offset += chunk;
+    }
+    *size = offset;
+    Report("USB audio index received bytes=%u", static_cast<unsigned>(offset));
+    return true;
+}
+
 bool PutLocalFile(radio_payload_file_t file, const char *local_path)
 {
     if (local_path == nullptr)
@@ -661,7 +769,15 @@ bool SyncFile(radio_payload_file_t file)
             Report("persistent file id=%u seeded from local cache", static_cast<unsigned>(file));
             return true;
         }
+        if (access(spec.path, F_OK) == 0)
+        {
+            Report("persistent file id=%u absent; local seed failed", static_cast<unsigned>(file));
+            return false;
+        }
         Report("persistent file id=%u absent; no local seed", static_cast<unsigned>(file));
+        /* A first run has no durable state to restore. Keep the service's
+         * defaults and treat the empty slot as a successful synchronization. */
+        return true;
     }
     else
         Report("persistent file id=%u restore failed; retaining local cache",
@@ -751,22 +867,17 @@ bool QueryAuxState(bool *running)
     return true;
 }
 
-} // namespace
-
-#endif /* PROSPERO_DATA_BRIDGE_ENABLED */
-
-bool radio_payload_bridge_start()
+bool StartBridgeLocked(unsigned reattach_attempts)
 {
-#if defined(PROSPERO_DATA_BRIDGE_ENABLED)
-    std::lock_guard<std::mutex> lock(g_bridge_mutex);
     if (g_bridge_ready.load() && PingBridge())
         return true;
     CloseBridgeChannel();
     Report("ProsperoRadioDataBridge.elf startup begin epoch=%lld",
            static_cast<long long>(std::time(nullptr)));
-    /* Reattach to a helper left alive by a fast app restart before launching
-     * another ELF instance. The payload changes ownership to this PID. */
-    if (ConnectBridgeChannel(1U) && CheckPayloadHealthBounded() && AttachCurrentProcess())
+    /* Let a helper with a lost client socket finish or accept a new owner
+     * before launching another process through elfldr. */
+    if (ConnectBridgeChannel(reattach_attempts) && CheckPayloadHealthBounded() &&
+        AttachCurrentProcess())
     {
         Report("existing payload bridge attached to app pid=%ld", static_cast<long>(getpid()));
         return true;
@@ -803,6 +914,46 @@ bool radio_payload_bridge_start()
     }
     Report("payload bridge owned by app pid=%ld", static_cast<long>(getpid()));
     return true;
+}
+
+bool TryStartBridgeLocked(unsigned reattach_attempts)
+{
+    if (g_bridge_retry_after > std::time(nullptr))
+        return false;
+    const bool ready = StartBridgeLocked(reattach_attempts);
+    if (ready)
+    {
+        g_bridge_retry_after = 0;
+        g_bridge_retry_seconds = 3U;
+        if (g_bridge_retry_failure_reported)
+            Report("bridge connection recovered");
+        g_bridge_retry_failure_reported = false;
+    }
+    else
+    {
+        g_bridge_retry_after = std::time(nullptr) + g_bridge_retry_seconds;
+        if (g_bridge_retry_seconds < 30U)
+            g_bridge_retry_seconds = g_bridge_retry_seconds > 15U
+                                         ? 30U
+                                         : g_bridge_retry_seconds * 2U;
+    }
+    return ready;
+}
+
+bool EnsureBridgeLocked()
+{
+    return g_bridge_ready.load() || TryStartBridgeLocked(8U);
+}
+
+} // namespace
+
+#endif /* PROSPERO_DATA_BRIDGE_ENABLED */
+
+bool radio_payload_bridge_start()
+{
+#if defined(PROSPERO_DATA_BRIDGE_ENABLED)
+    std::lock_guard<std::mutex> lock(g_bridge_mutex);
+    return TryStartBridgeLocked(1U);
 #else
     return false;
 #endif
@@ -812,6 +963,8 @@ bool radio_payload_bridge_sync(radio_payload_file_t file)
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
+    if (!EnsureBridgeLocked())
+        return false;
     return SyncFile(file);
 #else
     (void)file;
@@ -823,6 +976,8 @@ bool radio_payload_bridge_push(radio_payload_file_t file)
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
+    if (!EnsureBridgeLocked())
+        return false;
     return PushFile(file);
 #else
     (void)file;
@@ -834,7 +989,7 @@ bool radio_payload_bridge_push_file(radio_payload_file_t file, const char *local
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
-    if (!g_bridge_ready.load() || file == RADIO_PAYLOAD_REPORT || file == RADIO_PAYLOAD_AUXLIST)
+    if (!EnsureBridgeLocked() || file == RADIO_PAYLOAD_REPORT || file == RADIO_PAYLOAD_AUXLIST)
         return false;
     const bool result = PutLocalFile(file, local_path);
     if (!result)
@@ -851,6 +1006,8 @@ bool radio_payload_bridge_pull_report()
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
+    if (!EnsureBridgeLocked())
+        return false;
     return FetchPayloadReport();
 #else
     return false;
@@ -861,13 +1018,24 @@ bool radio_payload_bridge_keepalive()
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
-    if (!g_bridge_ready.load())
-        return false;
-    if (PingBridge())
+    const bool was_ready = g_bridge_ready.load();
+    if (was_ready && PingBridge())
         return true;
-    Report("bridge keepalive FAIL; persistent storage disabled for this run errno=%d", errno);
-    g_bridge_ready.store(false);
-    return false;
+    if (was_ready)
+    {
+        const int ping_error = errno;
+        Report("bridge keepalive failed errno=%d; attempting bounded reconnect", ping_error);
+    }
+    if (g_bridge_retry_after > std::time(nullptr))
+        return false;
+    const bool recovered = TryStartBridgeLocked(20U);
+    if (!recovered)
+    {
+        if (!g_bridge_retry_failure_reported)
+            Report("bridge reconnect failed errno=%d; retries use bounded backoff", errno);
+        g_bridge_retry_failure_reported = true;
+    }
+    return recovered;
 #else
     return false;
 #endif
@@ -877,7 +1045,7 @@ bool radio_payload_bridge_aux_start()
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
-    if (!g_bridge_ready.load())
+    if (!EnsureBridgeLocked())
         return false;
     bool running = false;
     if (QueryAuxState(&running) && running)
@@ -911,6 +1079,8 @@ bool radio_payload_bridge_aux_running()
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
+    if (!EnsureBridgeLocked())
+        return false;
     bool running = false;
     return QueryAuxState(&running) && running;
 #else
@@ -923,7 +1093,7 @@ bool radio_payload_bridge_fetch_aux_buffer(void *buffer, size_t capacity, size_t
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
-    if (!g_bridge_ready.load())
+    if (!EnsureBridgeLocked())
         return false;
     return GetRemoteAuxBuffer(buffer, capacity, size, format, not_found);
 #else
@@ -942,13 +1112,49 @@ bool radio_payload_bridge_store_aux_buffer(const void *buffer, size_t size,
 {
 #if defined(PROSPERO_DATA_BRIDGE_ENABLED)
     std::lock_guard<std::mutex> lock(g_bridge_mutex);
-    if (!g_bridge_ready.load())
+    if (!EnsureBridgeLocked())
         return false;
     return PutRemoteAuxBuffer(buffer, size, format);
 #else
     (void)buffer;
     (void)size;
     (void)format;
+    return false;
+#endif
+}
+
+bool radio_payload_bridge_fetch_disc_index(void *buffer, size_t capacity, size_t *size,
+                                           bool force_refresh)
+{
+#if defined(PROSPERO_DATA_BRIDGE_ENABLED)
+    std::lock_guard<std::mutex> lock(g_bridge_mutex);
+    if (!EnsureBridgeLocked())
+        return false;
+    return GetRemoteDiscIndex(buffer, capacity, size, force_refresh);
+#else
+    (void)buffer;
+    (void)capacity;
+    (void)force_refresh;
+    if (size != nullptr)
+        *size = 0U;
+    return false;
+#endif
+}
+
+bool radio_payload_bridge_fetch_usb_index(void *buffer, size_t capacity, size_t *size,
+                                          bool force_refresh)
+{
+#if defined(PROSPERO_DATA_BRIDGE_ENABLED)
+    std::lock_guard<std::mutex> lock(g_bridge_mutex);
+    if (!EnsureBridgeLocked())
+        return false;
+    return GetRemoteUsbIndex(buffer, capacity, size, force_refresh);
+#else
+    (void)buffer;
+    (void)capacity;
+    (void)force_refresh;
+    if (size != nullptr)
+        *size = 0U;
     return false;
 #endif
 }

@@ -15,6 +15,10 @@ KTX2_IDENTIFIER = bytes((0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0
 VK_FORMAT_R8G8B8A8_UNORM = 37
 MAX_CONTAINER_BYTES = 48 * 1024 * 1024
 STAGING_BYTES = 2 * 1024 * 1024
+CD_TEXTURES = ("prospero_cd_stack_overlay_2048.tga",) + tuple(
+    f"cd_disc_frame_{index:02d}.tga" for index in range(12)
+)
+MAX_CD_TEXTURE_FILE_BYTES = 12 * 1024 * 1024
 
 
 def fail(message: str) -> None:
@@ -101,6 +105,35 @@ def main() -> int:
     print(
         f"Runtime KTX2 validated for {texture_name}: ({width}x{height}, {mip_levels} mips, "
         f"{total_gpu_bytes / 1048576:.2f} MiB GPU image, {STAGING_BYTES / 1048576:.0f} MiB upload staging)"
+    )
+    cd_sizes = []
+    for cd_texture in CD_TEXTURES:
+        path = ART / cd_texture
+        if not path.is_file():
+            fail(f"Missing lazy-loaded CD texture: {path}")
+        with path.open("rb") as texture:
+            tga_header = texture.read(18)
+        if (len(tga_header) != 18 or tga_header[2] != 2 or tga_header[16] != 32 or
+                (tga_header[17] & 0x0f) != 8 or (tga_header[17] & 0x30) != 0x20):
+            fail(f"{path.name} must be an uncompressed 32-bit top-origin TGA with alpha")
+        width, height = struct.unpack_from("<HH", tga_header, 12)
+        if cd_texture == "prospero_cd_stack_overlay_2048.tga":
+            expected_dimensions = (2048, 1152)
+        else:
+            expected_dimensions = (128, 128)
+        expected_bytes = 18 + width * height * 4
+        if (width, height) != expected_dimensions or path.stat().st_size != expected_bytes:
+            fail(f"{path.name} has invalid dimensions or byte length: {width}x{height}")
+        cd_sizes.append(path.stat().st_size)
+    cd_file_bytes = sum(cd_sizes)
+    if cd_file_bytes > MAX_CD_TEXTURE_FILE_BYTES:
+        fail(
+            f"Optional CD textures exceed the {MAX_CD_TEXTURE_FILE_BYTES // (1024 * 1024)} MiB load budget: "
+            f"{cd_file_bytes / 1048576:.2f} MiB"
+        )
+    print(
+        f"Lazy CD texture files within budget: {cd_file_bytes / 1048576:.2f} / "
+        f"{MAX_CD_TEXTURE_FILE_BYTES / 1048576:.0f} MiB; loaded only when cd1 is available"
     )
     return 0
 

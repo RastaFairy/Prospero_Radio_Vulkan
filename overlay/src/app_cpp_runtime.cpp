@@ -95,7 +95,7 @@ const bool g_runtime_log_ready = []() {
         if (log != nullptr)
             std::setvbuf(log, nullptr, _IONBF, 0);
     }
-    std::fprintf(stderr, "[PS5-RT] runtime log ready (app_cpp_runtime fork __RUNTIME_VERSION__)\n");
+    std::fprintf(stderr, "[PS5-RT] Prospero Radio Vulkan runtime ready (fork __RUNTIME_VERSION__)\n");
     return log != nullptr;
 }();
 

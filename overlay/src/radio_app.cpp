@@ -38,6 +38,12 @@ namespace {
 
 constexpr unsigned kButtonCount = 7;
 constexpr unsigned kListRows = 7;
+constexpr unsigned kDiscRows = 5;
+constexpr unsigned kDiscFrameCount = 12;
+constexpr unsigned long long kBridgeKeepaliveIntervalMs = 10000ULL;
+constexpr unsigned long long kBridgeRetryIntervalMs = 3000ULL;
+constexpr unsigned long long kDiscIndexRefreshIntervalMs = 15000ULL;
+constexpr unsigned long long kUsbIndexRefreshIntervalMs = 30000ULL;
 constexpr unsigned kInvalidStation = ~0U;
 constexpr char kPresetFileMagic[8] = {'P', 'R', 'S', 'P', 'R', 'S', '0', '2'};
 constexpr char kPresetFileMagicV3[8] = {'P', 'R', 'S', 'P', 'R', 'S', '0', '3'};
@@ -107,6 +113,16 @@ void SetVisible(Rml::ElementDocument *document, const char *id, bool visible)
     SetClass(document, id, "hidden", !visible);
 }
 
+void ShowDiscFrame(Rml::ElementDocument *document, unsigned frame)
+{
+    for (unsigned index = 0U; index < kDiscFrameCount; ++index)
+    {
+        char id[32];
+        std::snprintf(id, sizeof(id), "cd-disc-icon-%02u", index);
+        SetVisible(document, id, index == frame);
+    }
+}
+
 void SetPixelProperty(Rml::ElementDocument *document, const char *id, const char *name, int value)
 {
     char text[24];
@@ -155,6 +171,38 @@ bool PlaybackActive(radio_playback_state_t state)
            state == RADIO_PLAYBACK_PLAYING || state == RADIO_PLAYBACK_STOPPING;
 }
 
+bool IsDiscStation(const std::vector<radio_station_t> &stations, const char *uuid)
+{
+    if (!uuid || !*uuid)
+        return false;
+    if (std::strncmp(uuid, "cd-audio-", 9U) == 0 ||
+        std::strncmp(uuid, "cd-file-", 8U) == 0)
+        return true;
+    return std::any_of(stations.begin(), stations.end(), [uuid](const radio_station_t &station) {
+        return std::strcmp(station.uuid, uuid) == 0;
+    });
+}
+
+bool IsUsbStation(const std::vector<radio_station_t> &stations, const char *uuid)
+{
+    if (!uuid || !*uuid)
+        return false;
+    if (std::strncmp(uuid, "usb-audio-", 10U) == 0)
+        return true;
+    return std::any_of(stations.begin(), stations.end(), [uuid](const radio_station_t &station) {
+        return std::strcmp(station.uuid, uuid) == 0;
+    });
+}
+
+bool IsDiscPlaybackActive(const std::vector<radio_station_t> &stations,
+                          const radio_service_status_t &status)
+{
+    if (!PlaybackActive(status.playback_state))
+        return false;
+    radio_station_t playing{};
+    return radio_service_get_playing_station(&playing) && IsDiscStation(stations, playing.uuid);
+}
+
 void CopyString(char *destination, std::size_t capacity, const char *source)
 {
     if (!capacity)
@@ -187,6 +235,18 @@ bool IsHttpUrl(const char *text)
 {
     return text && (strncasecmp(text, "http://", 7) == 0 ||
                     strncasecmp(text, "https://", 8) == 0);
+}
+
+std::uint16_t ReadDiscU16Be(const unsigned char *data)
+{
+    return static_cast<std::uint16_t>((static_cast<unsigned>(data[0]) << 8) | data[1]);
+}
+
+std::uint32_t ReadDiscU32Be(const unsigned char *data)
+{
+    return (static_cast<std::uint32_t>(data[0]) << 24) |
+           (static_cast<std::uint32_t>(data[1]) << 16) |
+           (static_cast<std::uint32_t>(data[2]) << 8) | data[3];
 }
 
 bool ReadM3uAttribute(const char *extinf, const char *key, char *output,
@@ -578,21 +638,50 @@ bool RadioApp::Initialize(Rml::ElementDocument *document)
     /* /data is visible to the bundled payload, not to this app sandbox. The
      * loopback bridge restores durable files before SQLite/preferences open. */
     const bool payload_ready = radio_payload_bridge_start();
+    payload_bridge_was_ready_ = payload_ready;
+    bool state_sync_ok = payload_ready;
     if (payload_ready)
     {
-        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_CATALOG);
-        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_FAVORITES);
-        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_EQ);
-        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_PRESETS);
-        (void)radio_payload_bridge_sync(RADIO_PAYLOAD_AUXFAVORITES);
-        (void)radio_payload_bridge_pull_report();
-        payload_keepalive_tick_ = SDL_GetTicks64();
+        const auto sync_state = [&state_sync_ok](radio_payload_file_t file, const char *name) {
+            bool synchronized = false;
+            for (unsigned attempt = 0U; attempt < 2U && !synchronized; ++attempt)
+                synchronized = radio_payload_bridge_sync(file);
+            if (!synchronized)
+            {
+                state_sync_ok = false;
+                std::fprintf(stderr,
+                             "[ProsperoRadio][bridge] startup restore failed file=%s after 2 attempts\n",
+                             name);
+            }
+        };
+        sync_state(RADIO_PAYLOAD_CATALOG, "catalog");
+        sync_state(RADIO_PAYLOAD_FAVORITES, "favorites");
+        sync_state(RADIO_PAYLOAD_EQ, "equalizer");
+        sync_state(RADIO_PAYLOAD_PRESETS, "presets");
+        sync_state(RADIO_PAYLOAD_AUXFAVORITES, "AUX favorites");
+        if (!radio_payload_bridge_pull_report())
+            std::fprintf(stderr, "[ProsperoRadio][bridge] startup report fetch failed\n");
     }
+    else
+        std::fprintf(stderr, "[ProsperoRadio][bridge] startup unavailable; recovery retries enabled\n");
+    if (!state_sync_ok)
+        std::fprintf(stderr,
+                     "[ProsperoRadio][bridge] persistent state was not fully restored before service init; this session uses local cache/defaults\n");
+    payload_keepalive_tick_ = SDL_GetTicks64() +
+                              (payload_ready ? kBridgeKeepaliveIntervalMs : 1000ULL);
     LoadAuxFavorites();
     radio_service_init();
     service_started_ = true;
     if (payload_ready)
+    {
         (void)FetchAuxPlaylist();
+        (void)FetchDiscIndex();
+        (void)FetchUsbIndex();
+    }
+    const unsigned long long startup_ticks = SDL_GetTicks64();
+    media_index_refresh_tick_ = startup_ticks + kDiscIndexRefreshIntervalMs;
+    usb_index_refresh_tick_ = startup_ticks + kUsbIndexRefreshIntervalMs;
+    UpdateDiscPresentation();
     RebuildFacets();
     genre_total_ = static_cast<unsigned>(genre_facets_.size());
     ApplyVolumeFrame();
@@ -688,8 +777,11 @@ void RadioApp::ApplyButtons()
     radio_service_get_status(&status);
     for (unsigned i = 0; i < kButtonCount; ++i)
     {
+        const bool list_match = selected_mode[i] == Mode::List &&
+                                (list_kind_ == selected_list[i] ||
+                                 (i == 1U && list_kind_ == ListKind::Usb));
         const bool selected = i != 0 && mode_ == selected_mode[i] &&
-                              (selected_mode[i] != Mode::List || list_kind_ == selected_list[i]) &&
+                              (selected_mode[i] != Mode::List || list_match) &&
                               !(i == 6 && !PlaybackActive(status.playback_state));
         const bool focused = mode_ == Mode::Home && button_focus_ == i;
         const char *state = selected && focused ? "selected_focus"
@@ -779,11 +871,26 @@ void RadioApp::PressButton(unsigned index)
     {
         radio_service_status_t status{};
         radio_service_get_status(&status);
+        if (disc_device_available_ && disc_focus_active_)
+        {
+            if (disc_stations_.empty())
+                SetText(document_, "cd-list-status", "NO PLAYABLE TRACKS");
+            else if (IsDiscPlaybackActive(disc_stations_, status))
+                radio_service_stop();
+            else
+                PlayDiscStation(disc_stations_[std::min(
+                    disc_selected_index_, static_cast<unsigned>(disc_stations_.size() - 1U))]);
+            RefreshDiscScreen();
+            break;
+        }
         if (PlaybackActive(status.playback_state))
             radio_service_stop();
-        else if ((tuned_is_aux_ && tuned_station_valid_) || status.station_count)
+        else if (((tuned_is_aux_ || tuned_is_disc_ || tuned_is_usb_) && tuned_station_valid_) ||
+                 status.station_count)
         {
-            if (tuned_is_aux_)
+            if (tuned_is_disc_ && tuned_station_valid_)
+                (void)radio_service_play_external(&tuned_station_);
+            else if (tuned_is_aux_ || tuned_is_usb_)
                 (void)radio_service_play_external(&tuned_station_);
             else
                 PlayIndex(tuned_index_);
@@ -812,7 +919,9 @@ void RadioApp::AdjustVolume(int direction)
 void RadioApp::TuneStation(int direction)
 {
     preset_active_ = -1;
-        tuned_is_aux_ = false;
+    tuned_is_aux_ = false;
+    tuned_is_disc_ = false;
+    tuned_is_usb_ = false;
     ApplyPresetIndicators();
     radio_service_status_t status{};
     radio_service_get_status(&status);
@@ -840,6 +949,8 @@ void RadioApp::PlayIndex(unsigned index)
     tuned_station_ = station;
     tuned_station_valid_ = true;
     tuned_is_aux_ = false;
+    tuned_is_disc_ = false;
+    tuned_is_usb_ = false;
     preset_active_ = -1;
     ApplyPresetIndicators();
     pending_play_uuid_[0] = '\0';
@@ -866,6 +977,8 @@ void RadioApp::PlayAuxStation(const radio_station_t &station)
     tuned_station_ = station;
     tuned_station_valid_ = true;
     tuned_is_aux_ = true;
+    tuned_is_disc_ = false;
+    tuned_is_usb_ = false;
     preset_active_ = -1;
     ApplyPresetIndicators();
     pending_play_uuid_[0] = '\0';
@@ -889,6 +1002,578 @@ void RadioApp::PlayAuxStation(const radio_station_t &station)
         SetText(document_, "home-status", "NO SE PUDO ABRIR LA URL M3U");
 }
 
+void RadioApp::PlayUsbStation(const radio_station_t &station)
+{
+    if (!station.uuid[0] || !IsHttpUrl(station.url))
+        return;
+    tuned_station_ = station;
+    tuned_station_valid_ = true;
+    tuned_is_aux_ = false;
+    tuned_is_disc_ = false;
+    tuned_is_usb_ = true;
+    preset_active_ = -1;
+    ApplyPresetIndicators();
+    pending_play_uuid_[0] = '\0';
+    pending_play_index_ = InvalidStation;
+    pending_play_external_ = false;
+
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    if (PlaybackActive(status.playback_state))
+    {
+        radio_station_t playing{};
+        if (radio_service_get_playing_station(&playing) &&
+            std::strcmp(playing.uuid, station.uuid) == 0)
+            return;
+        pending_play_station_ = station;
+        pending_play_external_ = true;
+        radio_service_stop();
+        return;
+    }
+    if (!radio_service_play_external(&station))
+        SetText(document_, "home-status", "NO SE PUDO ABRIR LA PISTA USB");
+}
+
+void RadioApp::StopUsbPlaybackIfUnavailable()
+{
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    radio_station_t playing{};
+    if (PlaybackActive(status.playback_state) &&
+        radio_service_get_playing_station(&playing) &&
+        IsUsbStation(usb_stations_, playing.uuid))
+    {
+        radio_service_stop();
+        std::fprintf(stderr, "[ProsperoRadio][USB] stop requested; mounted media unavailable\n");
+    }
+    if (pending_play_external_ &&
+        IsUsbStation(usb_stations_, pending_play_station_.uuid))
+    {
+        pending_play_external_ = false;
+        pending_play_station_ = radio_station_t{};
+    }
+    if (tuned_is_usb_ || IsUsbStation(usb_stations_, tuned_station_.uuid))
+    {
+        tuned_is_usb_ = false;
+        tuned_station_valid_ = false;
+    }
+}
+
+void RadioApp::PlayDiscStation(const radio_station_t &station)
+{
+    if (!station.uuid[0] || !IsHttpUrl(station.url))
+        return;
+    tuned_station_ = station;
+    tuned_station_valid_ = true;
+    tuned_is_aux_ = false;
+    tuned_is_disc_ = true;
+    tuned_is_usb_ = false;
+    preset_active_ = -1;
+    ApplyPresetIndicators();
+    pending_play_uuid_[0] = '\0';
+    pending_play_index_ = InvalidStation;
+    pending_play_external_ = false;
+
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    if (PlaybackActive(status.playback_state))
+    {
+        radio_station_t playing{};
+        if (radio_service_get_playing_station(&playing) &&
+            std::strcmp(playing.uuid, station.uuid) == 0)
+            return;
+        pending_play_station_ = station;
+        pending_play_external_ = true;
+        radio_service_stop();
+        return;
+    }
+    if (!radio_service_play_external(&station))
+        SetText(document_, "home-status", "NO SE PUDO INICIAR LA PISTA DEL CD");
+}
+
+void RadioApp::StopDiscPlaybackIfUnavailable()
+{
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    if (IsDiscPlaybackActive(disc_stations_, status))
+    {
+        radio_service_stop();
+        std::fprintf(stderr, "[ProsperoRadio][CD] stop requested; optical media unavailable\n");
+    }
+    if (pending_play_external_ &&
+        IsDiscStation(disc_stations_, pending_play_station_.uuid))
+    {
+        pending_play_external_ = false;
+        pending_play_station_ = radio_station_t{};
+    }
+    if (tuned_is_disc_ || IsDiscStation(disc_stations_, tuned_station_.uuid))
+    {
+        tuned_is_disc_ = false;
+        tuned_station_valid_ = false;
+    }
+}
+
+bool RadioApp::FetchDiscIndex(bool force_refresh)
+{
+    const bool scan_was_pending = disc_index_pending_;
+    const bool device_was_available = disc_device_available_;
+    const bool media_was_present = disc_media_present_;
+    disc_index_error_ = false;
+    disc_index_pending_ = false;
+    std::vector<radio_station_t> parsed_stations;
+    std::vector<unsigned char> bytes(RADIO_DISC_INDEX_MAX_BYTES);
+    std::size_t size = 0U;
+    if (!radio_payload_bridge_fetch_disc_index(bytes.data(), bytes.size(), &size,
+                                               force_refresh) ||
+        size < RADIO_DISC_INDEX_HEADER_BYTES || std::memcmp(bytes.data(), "PRCD", 4U) != 0 ||
+        bytes[4] != RADIO_DISC_INDEX_VERSION)
+    {
+        disc_index_error_ = true;
+        std::fprintf(stderr, "[ProsperoRadio][CD] index fetch/format FAIL\n");
+        RefreshDiscScreen();
+        return false;
+    }
+    disc_device_available_ =
+        bytes[RADIO_DISC_HEADER_DEVICE_AVAILABLE_OFFSET] != 0U;
+    const bool device_availability_changed =
+        device_was_available != disc_device_available_;
+    if (!device_was_available && disc_device_available_)
+    {
+        disc_focus_active_ = true;
+        disc_focus_initialized_ = true;
+        std::fprintf(stderr, "[ProsperoRadio][CD] optical device detected; CD surface activated\n");
+    }
+    if (device_was_available && !disc_device_available_)
+        StopDiscPlaybackIfUnavailable();
+    UpdateDiscPresentation();
+    if (device_availability_changed)
+        RefreshHome();
+    if (bytes[5] == RADIO_DISC_MEDIA_PENDING && size == RADIO_DISC_INDEX_HEADER_BYTES &&
+        ReadDiscU16Be(bytes.data() + 6U) == 0U)
+    {
+        disc_index_pending_ = true;
+        disc_index_poll_tick_ = SDL_GetTicks64() + 750U;
+        if (!scan_was_pending)
+            std::fprintf(stderr, "[ProsperoRadio][CD] index scan pending\n");
+        RefreshDiscScreen();
+        return false;
+    }
+    if (bytes[5] == RADIO_DISC_MEDIA_ERROR)
+    {
+        disc_index_error_ = true;
+        std::fprintf(stderr, "[ProsperoRadio][CD] index scan error\n");
+        RefreshDiscScreen();
+        return false;
+    }
+    if (bytes[5] > 3U)
+    {
+        disc_index_error_ = true;
+        std::fprintf(stderr, "[ProsperoRadio][CD] index media kind invalid=%u\n",
+                     static_cast<unsigned>(bytes[5]));
+        RefreshDiscScreen();
+        return false;
+    }
+    disc_index_poll_tick_ = 0U;
+    const unsigned count = ReadDiscU16Be(bytes.data() + 6U);
+    if (count > RADIO_DISC_MAX_ENTRIES)
+    {
+        disc_index_error_ = true;
+        std::fprintf(stderr, "[ProsperoRadio][CD] index entry limit FAIL count=%u\n", count);
+        RefreshDiscScreen();
+        return false;
+    }
+    if (count != 0U && bytes[5] == 0U)
+    {
+        disc_index_error_ = true;
+        std::fprintf(stderr, "[ProsperoRadio][CD] index status/count mismatch\n");
+        RefreshDiscScreen();
+        return false;
+    }
+    std::size_t offset = RADIO_DISC_INDEX_HEADER_BYTES;
+    bool seen_tracks[100]{};
+    bool seen_files[RADIO_DISC_MAX_ENTRIES]{};
+    for (unsigned item = 0U; item < count; ++item)
+    {
+        if (offset > size || size - offset < RADIO_DISC_INDEX_RECORD_FIXED_BYTES)
+        {
+            disc_index_error_ = true;
+            RefreshDiscScreen();
+            return false;
+        }
+        const unsigned char type = bytes[offset];
+        const unsigned id = ReadDiscU16Be(bytes.data() + offset + 1U);
+        const unsigned track_number = bytes[offset + 3U];
+        const std::uint32_t start_lba = ReadDiscU32Be(bytes.data() + offset + 4U);
+        const std::uint32_t end_lba = ReadDiscU32Be(bytes.data() + offset + 8U);
+        const unsigned name_size = ReadDiscU16Be(bytes.data() + offset + 12U);
+        offset += RADIO_DISC_INDEX_RECORD_FIXED_BYTES;
+        if (name_size == 0U || name_size > RADIO_DISC_NAME_BYTES ||
+            name_size > size - offset ||
+            std::memchr(bytes.data() + offset, '\0', name_size) != nullptr)
+        {
+            disc_index_error_ = true;
+            RefreshDiscScreen();
+            return false;
+        }
+        radio_station_t station{};
+        std::memcpy(station.name, bytes.data() + offset,
+                    std::min<std::size_t>(name_size, sizeof(station.name) - 1U));
+        station.name[std::min<std::size_t>(name_size, sizeof(station.name) - 1U)] = '\0';
+        offset += name_size;
+        if (type == RADIO_DISC_ENTRY_CDDA)
+        {
+            if (track_number == 0U || track_number >= 100U || id != track_number ||
+                seen_tracks[track_number] || end_lba <= start_lba)
+            {
+                disc_index_error_ = true;
+                RefreshDiscScreen();
+                return false;
+            }
+            seen_tracks[track_number] = true;
+            std::snprintf(station.uuid, sizeof(station.uuid), "cd-audio-%03u", track_number);
+            std::snprintf(station.url, sizeof(station.url),
+                          "http://127.0.0.1:%u/track/%u", RADIO_DISC_HTTP_PORT,
+                          track_number);
+            CopyString(station.codec, sizeof(station.codec), "CDDA");
+            CopyString(station.tags, sizeof(station.tags), "CD-DA");
+            station.bitrate = 1411U;
+        }
+        else if (type == RADIO_DISC_ENTRY_MP3 || type == RADIO_DISC_ENTRY_AAC ||
+                 type == RADIO_DISC_ENTRY_FLAC || type == RADIO_DISC_ENTRY_WAV)
+        {
+            if (id >= RADIO_DISC_MAX_ENTRIES || seen_files[id])
+            {
+                disc_index_error_ = true;
+                RefreshDiscScreen();
+                return false;
+            }
+            seen_files[id] = true;
+            std::snprintf(station.uuid, sizeof(station.uuid), "cd-file-%03u", id);
+            std::snprintf(station.url, sizeof(station.url),
+                          "http://127.0.0.1:%u/file/%u", RADIO_DISC_HTTP_PORT, id);
+            const char *codec = type == RADIO_DISC_ENTRY_MP3 ? "MP3"
+                                : type == RADIO_DISC_ENTRY_AAC ? "AAC"
+                                : type == RADIO_DISC_ENTRY_FLAC ? "FLAC"
+                                                               : "WAV";
+            CopyString(station.codec, sizeof(station.codec), codec);
+            CopyString(station.tags, sizeof(station.tags), "DISC AUDIO");
+        }
+        else
+        {
+            disc_index_error_ = true;
+            RefreshDiscScreen();
+            return false;
+        }
+        parsed_stations.push_back(station);
+    }
+    if (offset != size)
+    {
+        disc_index_error_ = true;
+        RefreshDiscScreen();
+        return false;
+    }
+    disc_stations_.swap(parsed_stations);
+    disc_media_present_ = bytes[5] != 0U;
+    if (media_was_present && !disc_media_present_)
+        StopDiscPlaybackIfUnavailable();
+    if (media_was_present != disc_media_present_)
+        RefreshHome();
+    if (disc_selected_index_ >= disc_stations_.size())
+        disc_selected_index_ = disc_stations_.empty() ? 0U
+                                                       : static_cast<unsigned>(disc_stations_.size() - 1U);
+    std::fprintf(stderr, "[ProsperoRadio][CD] index result=PASS media=%u entries=%u\n",
+                 static_cast<unsigned>(bytes[5]), count);
+    RefreshDiscScreen();
+    return true;
+}
+
+bool RadioApp::FetchUsbIndex(bool force_refresh)
+{
+    const bool scan_was_pending = usb_index_pending_;
+    const bool device_was_available = usb_device_available_;
+    usb_index_error_ = false;
+    usb_index_pending_ = false;
+    std::vector<radio_station_t> parsed_stations;
+    std::vector<unsigned char> bytes(RADIO_USB_INDEX_MAX_BYTES);
+    std::size_t size = 0U;
+    if (!radio_payload_bridge_fetch_usb_index(bytes.data(), bytes.size(), &size,
+                                              force_refresh) ||
+        size < RADIO_USB_INDEX_HEADER_BYTES || std::memcmp(bytes.data(), "PRUS", 4U) != 0 ||
+        bytes[4] != RADIO_USB_INDEX_VERSION)
+    {
+        usb_index_error_ = true;
+        std::fprintf(stderr, "[ProsperoRadio][USB] index fetch/format FAIL\n");
+        if (mode_ == Mode::List && list_kind_ == ListKind::Usb)
+            RefreshList();
+        return false;
+    }
+    usb_device_available_ =
+        bytes[RADIO_USB_HEADER_DEVICE_AVAILABLE_OFFSET] != 0U;
+    if (device_was_available && !usb_device_available_)
+    {
+        StopUsbPlaybackIfUnavailable();
+        RefreshHome();
+    }
+    if (bytes[5] == RADIO_USB_MEDIA_PENDING && size == RADIO_USB_INDEX_HEADER_BYTES &&
+        ReadDiscU16Be(bytes.data() + 6U) == 0U)
+    {
+        usb_index_pending_ = true;
+        usb_index_poll_tick_ = SDL_GetTicks64() + 750U;
+        if (!scan_was_pending)
+            std::fprintf(stderr, "[ProsperoRadio][USB] index scan pending\n");
+        if (mode_ == Mode::List && list_kind_ == ListKind::Usb)
+            RefreshList();
+        return false;
+    }
+    if (bytes[5] == RADIO_USB_MEDIA_ERROR)
+    {
+        usb_index_error_ = true;
+        std::fprintf(stderr, "[ProsperoRadio][USB] index scan error\n");
+        if (mode_ == Mode::List && list_kind_ == ListKind::Usb)
+            RefreshList();
+        return false;
+    }
+    const unsigned count = ReadDiscU16Be(bytes.data() + 6U);
+    if (count > RADIO_USB_MAX_ENTRIES || bytes[5] > 2U ||
+        (bytes[5] == 0U && usb_device_available_) ||
+        (bytes[5] != 0U && !usb_device_available_) ||
+        (count != 0U && bytes[5] != 1U) || (count == 0U && bytes[5] == 1U))
+    {
+        usb_index_error_ = true;
+        std::fprintf(stderr, "[ProsperoRadio][USB] index status/count mismatch\n");
+        return false;
+    }
+    std::size_t offset = RADIO_USB_INDEX_HEADER_BYTES;
+    bool seen_ids[RADIO_USB_MAX_ENTRIES]{};
+    for (unsigned item = 0U; item < count; ++item)
+    {
+        if (offset > size || size - offset < RADIO_USB_INDEX_RECORD_FIXED_BYTES)
+        {
+            usb_index_error_ = true;
+            return false;
+        }
+        const unsigned char type = bytes[offset];
+        const unsigned id = ReadDiscU16Be(bytes.data() + offset + 1U);
+        const unsigned name_size = ReadDiscU16Be(bytes.data() + offset + 12U);
+        offset += RADIO_USB_INDEX_RECORD_FIXED_BYTES;
+        if (name_size == 0U || name_size > RADIO_USB_NAME_BYTES || name_size > size - offset ||
+            std::memchr(bytes.data() + offset, '\0', name_size) != nullptr ||
+            id >= RADIO_USB_MAX_ENTRIES || seen_ids[id])
+        {
+            usb_index_error_ = true;
+            return false;
+        }
+        seen_ids[id] = true;
+        radio_station_t station{};
+        const std::size_t copied = std::min<std::size_t>(name_size, sizeof(station.name) - 1U);
+        std::memcpy(station.name, bytes.data() + offset, copied);
+        station.name[copied] = '\0';
+        offset += name_size;
+        const char *codec = nullptr;
+        switch (type)
+        {
+        case RADIO_USB_ENTRY_MP3: codec = "MP3"; break;
+        case RADIO_USB_ENTRY_AAC: codec = "AAC"; break;
+        case RADIO_USB_ENTRY_FLAC: codec = "FLAC"; break;
+        case RADIO_USB_ENTRY_WAV: codec = "WAV"; break;
+        default:
+            usb_index_error_ = true;
+            return false;
+        }
+        std::snprintf(station.uuid, sizeof(station.uuid), "usb-audio-%03u", id);
+        std::snprintf(station.url, sizeof(station.url), "http://127.0.0.1:%u/usb/%u",
+                      RADIO_USB_HTTP_PORT, id);
+        CopyString(station.codec, sizeof(station.codec), codec);
+        CopyString(station.tags, sizeof(station.tags), "USB Audio");
+        CopyString(station.country_code, sizeof(station.country_code), "USB");
+        parsed_stations.push_back(station);
+    }
+    if (offset != size)
+    {
+        usb_index_error_ = true;
+        return false;
+    }
+    usb_stations_.swap(parsed_stations);
+    usb_index_poll_tick_ = 0U;
+    std::fprintf(stderr, "[ProsperoRadio][USB] index result=PASS mounted=%u entries=%u\n",
+                 static_cast<unsigned>(usb_device_available_), count);
+    if (mode_ == Mode::List && list_kind_ == ListKind::Usb)
+    {
+        BuildList();
+        RefreshList();
+    }
+    return true;
+}
+
+void RadioApp::UpdateDiscPresentation()
+{
+    if (!disc_device_available_)
+        disc_focus_active_ = false;
+    else if (!disc_focus_initialized_)
+    {
+        disc_focus_active_ = true;
+        disc_focus_initialized_ = true;
+    }
+    SetVisible(document_, "cd-interface", disc_device_available_);
+    SetClass(document_, "cd-interface", "sleeping", !disc_focus_active_);
+    SetClass(document_, "app-shell", "cd-stack-active", disc_device_available_);
+    SetVisible(document_, "radio-cd-stack-overlay", disc_device_available_);
+    if (disc_device_available_ && !disc_stack_loaded_)
+        if (Rml::Element *stack = document_->GetElementById("radio-cd-stack-overlay"))
+        {
+            stack->SetAttribute("src", Rml::String("art/prospero_cd_stack_overlay_2048.tga"));
+            disc_stack_loaded_ = true;
+        }
+    if (disc_device_available_ && !disc_frame_loaded_)
+    {
+        bool loaded = true;
+        for (unsigned index = 0U; index < kDiscFrameCount; ++index)
+        {
+            char id[32];
+            char source[48];
+            std::snprintf(id, sizeof(id), "cd-disc-icon-%02u", index);
+            std::snprintf(source, sizeof(source), "art/cd_disc_frame_%02u.tga", index);
+            if (Rml::Element *disc = document_->GetElementById(id))
+                disc->SetAttribute("src", Rml::String(source));
+            else
+                loaded = false;
+        }
+        disc_frame_loaded_ = loaded;
+        if (loaded)
+            ShowDiscFrame(document_, disc_animation_frame_);
+    }
+    SetText(document_, "home-hint", disc_device_available_
+                                         ? "↑ CD  |  ↓ RADIO  |  OPTIONS: SCAN  |  DIAL: TRACK"
+                                         : "CROSS: press  |  DIAL: tune  |  SQUARE: favorite");
+    RefreshDiscScreen();
+}
+
+void RadioApp::RefreshDiscScreen()
+{
+    if (!document_)
+        return;
+    SetVisible(document_, "cd-interface", disc_device_available_);
+    SetClass(document_, "cd-interface", "sleeping", !disc_focus_active_);
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    radio_station_t playing_station{};
+    const bool disc_playing = PlaybackActive(status.playback_state) &&
+                              radio_service_get_playing_station(&playing_station) &&
+                              IsDiscStation(disc_stations_, playing_station.uuid);
+    const bool disc_busy = disc_index_pending_ || disc_playing;
+    SetVisible(document_, "cd-disc-viewport", disc_busy && disc_focus_active_);
+    if (disc_index_error_)
+        SetText(document_, "cd-player-status", "READER ERROR");
+    else if (disc_index_pending_)
+        SetText(document_, "cd-player-status", "READING DISC");
+    else if (!disc_media_present_)
+        SetText(document_, "cd-player-status", "INSERT AUDIO DISC");
+    else if (disc_stations_.empty())
+        SetText(document_, "cd-player-status", "NO PLAYABLE TRACKS");
+    else if (disc_playing)
+        SetText(document_, "cd-player-status", status.playback_state == RADIO_PLAYBACK_CONNECTING
+                                                    ? "CONNECTING"
+                                                    : status.playback_state == RADIO_PLAYBACK_BUFFERING
+                                                          ? "BUFFERING"
+                                                          : "PLAYING");
+    else
+        SetText(document_, "cd-player-status", "DISC READY");
+
+    const unsigned count = static_cast<unsigned>(disc_stations_.size());
+    const bool has_cdda_tracks = std::any_of(
+        disc_stations_.begin(), disc_stations_.end(), [](const radio_station_t &station) {
+            return std::strcmp(station.codec, "CDDA") == 0;
+        });
+    const bool has_data_files = std::any_of(
+        disc_stations_.begin(), disc_stations_.end(), [](const radio_station_t &station) {
+            return std::strcmp(station.codec, "CDDA") != 0;
+        });
+    const unsigned first = disc_selected_index_ >= kDiscRows
+                               ? disc_selected_index_ - kDiscRows + 1U
+                               : 0U;
+    char text[160];
+    if (count == 0U)
+    {
+        SetText(document_, "cd-now-title", disc_index_error_ ? "CHECK READER"
+                                                              : disc_index_pending_ ? "READING DISC"
+                                                              : disc_media_present_ ? "NO PLAYABLE TRACKS"
+                                                                                    : "INSERT AN AUDIO CD");
+        SetText(document_, "cd-now-meta", "CD-DA 44.1 kHz  ·  CD-MP3");
+        if (disc_index_pending_)
+            CopyString(text, sizeof(text), "SCANNING OPTICAL DRIVE");
+        else if (disc_index_error_)
+            CopyString(text, sizeof(text), "SCAN FAILED");
+        else if (disc_media_present_)
+            CopyString(text, sizeof(text), "NO SUPPORTED TRACKS");
+        else
+            CopyString(text, sizeof(text), "INSERT DISC TO BEGIN");
+        SetText(document_, "cd-list-status", text);
+    }
+    else
+    {
+        const radio_station_t &selected = disc_stations_[disc_selected_index_];
+        SetText(document_, "cd-now-title", selected.name);
+        if (std::strcmp(selected.codec, "CDDA") == 0)
+            std::snprintf(text, sizeof(text), "TRACK %02u / %02u  ·  CD-DA · 44.1 kHz",
+                          disc_selected_index_ + 1U, count);
+        else
+            std::snprintf(text, sizeof(text), "FILE %02u / %02u  ·  DISC %s",
+                          disc_selected_index_ + 1U, count, selected.codec);
+        SetText(document_, "cd-now-meta", text);
+        const char *item_label = has_cdda_tracks && has_data_files
+                                     ? "AUDIO ITEMS"
+                                     : has_data_files ? "AUDIO FILES" : "CD-DA TRACKS";
+        std::snprintf(text, sizeof(text), "%u %s  ·  DIAL SELECTS  ·  ↓ RADIO",
+                      count, item_label);
+        SetText(document_, "cd-list-status", text);
+    }
+    for (unsigned row = 0U; row < kDiscRows; ++row)
+    {
+        char id[40];
+        const unsigned index = first + row;
+        if (index >= count)
+        {
+            std::snprintf(id, sizeof(id), "cd-track-%u", row);
+            SetVisible(document_, id, false);
+            continue;
+        }
+        const radio_station_t &station = disc_stations_[index];
+        std::snprintf(id, sizeof(id), "cd-track-%u", row);
+        SetVisible(document_, id, true);
+        SetClass(document_, id, "selected", index == disc_selected_index_);
+        SetClass(document_, id, "playing", disc_playing &&
+                                                std::strcmp(station.uuid, playing_station.uuid) == 0);
+        std::snprintf(id, sizeof(id), "cd-track-name-%u", row);
+        SetText(document_, id, station.name);
+        std::snprintf(id, sizeof(id), "cd-track-kind-%u", row);
+        std::snprintf(text, sizeof(text), "%s  %02u/%02u",
+                      std::strcmp(station.codec, "CDDA") == 0 ? "CD-DA" : station.codec,
+                      index + 1U, count);
+        SetText(document_, id, text);
+    }
+}
+
+void RadioApp::ChangeDiscSelection(int direction)
+{
+    if (disc_stations_.empty())
+        return;
+    const unsigned count = static_cast<unsigned>(disc_stations_.size());
+    const unsigned next = direction > 0
+                              ? std::min(disc_selected_index_ + 1U, count - 1U)
+                              : (disc_selected_index_ == 0U ? 0U : disc_selected_index_ - 1U);
+    if (next == disc_selected_index_)
+        return;
+    radio_service_status_t status{};
+    radio_service_get_status(&status);
+    const bool was_playing_disc = IsDiscPlaybackActive(disc_stations_, status);
+    disc_selected_index_ = next;
+    if (was_playing_disc)
+        PlayDiscStation(disc_stations_[disc_selected_index_]);
+    if (was_playing_disc)
+        RefreshHome();
+    RefreshDiscScreen();
+}
+
 /* --- list mode -------------------------------------------------------- */
 
 void RadioApp::BuildList()
@@ -896,6 +1581,7 @@ void RadioApp::BuildList()
     for (unsigned &entry : list_indices_)
         entry = kInvalidStation;
     std::fill(list_aux_entries_, list_aux_entries_ + kListRows, false);
+    std::fill(list_usb_entries_, list_usb_entries_ + kListRows, false);
     if (list_kind_ == ListKind::Auxiliary)
     {
         list_total_ = static_cast<unsigned>(aux_stations_.size());
@@ -908,6 +1594,21 @@ void RadioApp::BuildList()
         {
             list_indices_[row] = list_start_ + row;
             list_aux_entries_[row] = true;
+        }
+        return;
+    }
+    if (list_kind_ == ListKind::Usb)
+    {
+        list_total_ = static_cast<unsigned>(usb_stations_.size());
+        if (list_total_ && list_start_ >= list_total_)
+        {
+            list_start_ = (list_total_ - 1U) / kListRows * kListRows;
+            list_cursor_ = 0;
+        }
+        for (unsigned row = 0; row < kListRows && list_start_ + row < list_total_; ++row)
+        {
+            list_indices_[row] = list_start_ + row;
+            list_usb_entries_[row] = true;
         }
         return;
     }
@@ -986,11 +1687,13 @@ void RadioApp::RefreshList()
         list_cursor_ = std::min(kListRows - 1U, list_total_ - list_start_ - 1U);
     const char *title = list_kind_ == ListKind::Favorites ? "FAVORITES"
                         : list_kind_ == ListKind::Auxiliary ? "AUX"
-                                                            : "RADIO BROWSER";
+                        : list_kind_ == ListKind::Usb       ? "USB AUDIO"
+                                                           : "RADIO BROWSER";
     SetText(document_, "list-title", title);
     SetClass(document_, "list-tab-radio", "active", list_kind_ == ListKind::Radio);
     SetClass(document_, "list-tab-favorites", "active", list_kind_ == ListKind::Favorites);
     SetClass(document_, "list-tab-aux", "active", list_kind_ == ListKind::Auxiliary);
+    SetClass(document_, "list-tab-usb", "active", list_kind_ == ListKind::Usb);
     char text[96];
     if (list_total_ == 0U)
     {
@@ -998,6 +1701,11 @@ void RadioApp::RefreshList()
                                                ? "SIN FAVORITOS  |  □ GUARDA"
                                            : list_kind_ == ListKind::Auxiliary
                                                ? "AUX VACIA  |  ENTRA POR AUX"
+                                           : list_kind_ == ListKind::Usb
+                                               ? usb_index_pending_ ? "LEYENDO UNIDADES USB"
+                                               : usb_index_error_ ? "ERROR AL LEER USB"
+                                               : usb_device_available_ ? "UNIDAD SIN AUDIO COMPATIBLE"
+                                                                       : "CONECTA USB FAT32 / EXFAT"
                                                : "CATALOGO CARGANDO");
         for (unsigned row = 0; row < kListRows; ++row)
         {
@@ -1009,7 +1717,11 @@ void RadioApp::RefreshList()
         }
         return;
     }
-    if (list_kind_ == ListKind::Auxiliary)
+    if (list_kind_ == ListKind::Usb && usb_index_error_)
+        CopyString(text, sizeof(text), "ERROR AL LEER USB · MOSTRANDO ULTIMA LISTA");
+    else if (list_kind_ == ListKind::Usb && usb_index_pending_)
+        CopyString(text, sizeof(text), "ACTUALIZANDO USB · ULTIMA LISTA VALIDA");
+    else if (list_kind_ == ListKind::Auxiliary)
         std::snprintf(text, sizeof(text), "%u/%u | □ FAV · 3s BORRAR",
                       list_start_ + list_cursor_ + 1U, list_total_);
     else
@@ -1031,7 +1743,15 @@ void RadioApp::RefreshList()
         SetVisible(document_, id, true);
         radio_station_t station{};
         bool have_station = false;
-        if (list_aux_entries_[row])
+        if (list_usb_entries_[row])
+        {
+            if (list_indices_[row] < usb_stations_.size())
+            {
+                station = usb_stations_[list_indices_[row]];
+                have_station = true;
+            }
+        }
+        else if (list_aux_entries_[row])
         {
             const auto &source = list_kind_ == ListKind::Favorites ? aux_favorites_ : aux_stations_;
             if (list_indices_[row] < source.size())
@@ -1055,7 +1775,9 @@ void RadioApp::RefreshList()
         std::snprintf(id, sizeof(id), "list-meta-%u", row);
         char tag[40];
         FirstValue(station.tags, tag, sizeof(tag));
-        if (list_aux_entries_[row])
+        if (list_usb_entries_[row])
+            std::snprintf(text, sizeof(text), "USB AUDIO  |  %s", station.codec);
+        else if (list_aux_entries_[row])
             std::snprintf(text, sizeof(text), "AUX  |  %.24s  |  %s", *tag ? tag : "Radio",
                           station.codec);
         else
@@ -1079,7 +1801,7 @@ void RadioApp::RefreshList()
             SetText(document_, countdown_id, text);
         }
         std::snprintf(id, sizeof(id), "list-fav-%u", row);
-        SetVisible(document_, id, !show_delete_countdown &&
+        SetVisible(document_, id, !show_delete_countdown && !list_usb_entries_[row] &&
                                        (list_aux_entries_[row] ? IsAuxFavorite(station.uuid)
                                                                : radio_service_is_favorite(station.uuid)));
         std::snprintf(id, sizeof(id), "list-meta-%u", row);
@@ -1121,6 +1843,15 @@ void RadioApp::RefreshHome()
 {
     radio_service_status_t status{};
     radio_service_get_status(&status);
+    if (disc_device_available_ && disc_focus_active_ && disc_media_present_)
+    {
+        /* The upper display owns the track list and now-playing metadata while
+         * it is selected. Keep the canonical lower LCD on the input label so
+         * the same track title is not drawn twice. */
+        SetText(document_, "home-name", "CD PLAYER");
+        SetText(document_, "home-meta", "USB OPTICAL INPUT");
+        return;
+    }
     radio_station_t station{};
     bool have = PlaybackActive(status.playback_state) &&
                 radio_service_get_playing_station(&station);
@@ -1135,6 +1866,17 @@ void RadioApp::RefreshHome()
     {
         tuned_station_ = station;
         tuned_station_valid_ = true;
+        const bool disc_source = disc_device_available_ && disc_media_present_ &&
+                                 (tuned_is_disc_ ||
+                                  IsDiscStation(disc_stations_, station.uuid));
+        if (disc_source)
+        {
+            /* The upper CD display owns track details while the lower radio
+             * LCD identifies the selected input instead of repeating them. */
+            SetText(document_, "home-name", "CD PLAYER");
+            SetText(document_, "home-meta", "USB OPTICAL INPUT");
+            return;
+        }
         SetText(document_, "home-name", station.name);
         char tag[40];
         FirstValue(station.tags, tag, sizeof(tag));
@@ -1467,6 +2209,61 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
         return;
     }
 
+    if (disc_device_available_ && mode_ == Mode::Home)
+    {
+        if (event.key == RADIO_INPUT_UP || event.key == RADIO_INPUT_DOWN)
+        {
+            const bool returning_to_radio =
+                event.key == RADIO_INPUT_DOWN && disc_focus_active_;
+            if (returning_to_radio)
+            {
+                tuned_is_disc_ = false;
+                tuned_station_valid_ = false;
+                if (pending_play_external_ &&
+                    IsDiscStation(disc_stations_, pending_play_station_.uuid))
+                {
+                    pending_play_external_ = false;
+                    pending_play_station_ = radio_station_t{};
+                }
+                radio_service_status_t status{};
+                radio_service_get_status(&status);
+                if (IsDiscPlaybackActive(disc_stations_, status))
+                {
+                    radio_service_stop();
+                    std::fprintf(stderr,
+                                 "[ProsperoRadio][CD] stop requested on radio focus\n");
+                }
+            }
+            disc_focus_active_ = event.key == RADIO_INPUT_UP;
+            disc_animation_tick_ = SDL_GetTicks64();
+            UpdateDiscPresentation();
+            if (returning_to_radio)
+                RefreshHome();
+            ApplyButtons();
+            return;
+        }
+        if (disc_focus_active_)
+        {
+            if (event.key == RADIO_INPUT_OPTIONS)
+            {
+                radio_service_status_t status{};
+                radio_service_get_status(&status);
+                if (PlaybackActive(status.playback_state))
+                    SetText(document_, "cd-list-status", "STOP PLAYBACK BEFORE SCAN");
+                else
+                    (void)FetchDiscIndex(true);
+                RefreshDiscScreen();
+                return;
+            }
+            if (event.key == RADIO_INPUT_STATION_NEXT ||
+                event.key == RADIO_INPUT_STATION_PREVIOUS)
+            {
+                ChangeDiscSelection(event.key == RADIO_INPUT_STATION_NEXT ? 1 : -1);
+                return;
+            }
+        }
+    }
+
     if (mode_ == Mode::Eq)
     {
         if (event.key == RADIO_INPUT_TRIANGLE || event.key == RADIO_INPUT_CIRCLE)
@@ -1616,29 +2413,48 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
                     list_kind_ = ListKind::Favorites;
                 else if (list_kind_ == ListKind::Favorites)
                     list_kind_ = ListKind::Auxiliary;
+                else if (list_kind_ == ListKind::Auxiliary)
+                    list_kind_ = ListKind::Usb;
                 else
                     list_kind_ = ListKind::Radio;
             }
             else
             {
                 if (list_kind_ == ListKind::Radio)
-                    list_kind_ = ListKind::Auxiliary;
+                    list_kind_ = ListKind::Usb;
                 else if (list_kind_ == ListKind::Favorites)
                     list_kind_ = ListKind::Radio;
-                else
+                else if (list_kind_ == ListKind::Auxiliary)
                     list_kind_ = ListKind::Favorites;
+                else
+                    list_kind_ = ListKind::Auxiliary;
             }
             list_start_ = list_cursor_ = 0;
+            if (list_kind_ == ListKind::Usb)
+                (void)FetchUsbIndex(true);
             BuildList();
             RefreshList();
             ApplyButtons();
+            return;
+        }
+        if (event.key == RADIO_INPUT_OPTIONS && list_kind_ == ListKind::Usb)
+        {
+            (void)FetchUsbIndex(true);
+            BuildList();
+            RefreshList();
             return;
         }
         if (event.key == RADIO_INPUT_CROSS)
         {
             if (list_indices_[list_cursor_] != kInvalidStation)
             {
-                if (list_aux_entries_[list_cursor_])
+                if (list_usb_entries_[list_cursor_])
+                {
+                    const unsigned index = list_indices_[list_cursor_];
+                    if (index < usb_stations_.size())
+                        PlayUsbStation(usb_stations_[index]);
+                }
+                else if (list_aux_entries_[list_cursor_])
                 {
                     const auto &source = list_kind_ == ListKind::Favorites ? aux_favorites_ : aux_stations_;
                     const unsigned index = list_indices_[list_cursor_];
@@ -1656,7 +2472,11 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
         }
         if (event.key == RADIO_INPUT_SQUARE)
         {
-            if (list_aux_entries_[list_cursor_])
+            if (list_usb_entries_[list_cursor_])
+            {
+                SetText(document_, "list-status", "PISTA USB: SIN FAVORITOS");
+            }
+            else if (list_aux_entries_[list_cursor_])
             {
                 const auto &source = list_kind_ == ListKind::Favorites ? aux_favorites_ : aux_stations_;
                 const unsigned index = list_indices_[list_cursor_];
@@ -1713,6 +2533,16 @@ void RadioApp::HandleInput(const radio_input_event_t &event)
     }
     if (event.key == RADIO_INPUT_SQUARE)
     {
+        if (tuned_is_disc_)
+        {
+            SetText(document_, "home-status", "LAS PISTAS DEL CD NO SE GUARDAN EN FAVORITOS");
+            return;
+        }
+        if (tuned_is_usb_)
+        {
+            SetText(document_, "home-status", "PISTAS USB NO SE GUARDAN EN FAVORITOS AUX");
+            return;
+        }
         if (tuned_is_aux_)
         {
             const bool was_favorite = IsAuxFavorite(tuned_station_.uuid);
@@ -1825,15 +2655,81 @@ void RadioApp::Poll()
     have_last_status_ = true;
 
     const unsigned long long now = SDL_GetTicks64();
+    if (disc_index_pending_ && now >= disc_index_poll_tick_)
+    {
+        (void)FetchDiscIndex(false);
+        RefreshDiscScreen();
+    }
+    if (usb_index_pending_ && now >= usb_index_poll_tick_)
+        (void)FetchUsbIndex(false);
+    if (payload_bridge_was_ready_ && now >= media_index_refresh_tick_)
+    {
+        radio_station_t playing_station{};
+        const bool has_playing_station = PlaybackActive(status.playback_state) &&
+                                         radio_service_get_playing_station(&playing_station);
+        const bool disc_playing = has_playing_station &&
+                                  IsDiscStation(disc_stations_, playing_station.uuid);
+        const bool disc_start_pending = pending_play_external_ &&
+                                        IsDiscStation(disc_stations_, pending_play_station_.uuid);
+        if (!disc_index_pending_ && !disc_playing && !disc_start_pending)
+        {
+            (void)FetchDiscIndex(true);
+            RefreshDiscScreen();
+        }
+        media_index_refresh_tick_ = now + kDiscIndexRefreshIntervalMs;
+    }
+    if (payload_bridge_was_ready_ && now >= usb_index_refresh_tick_)
+    {
+        radio_station_t playing_station{};
+        const bool has_playing_station = PlaybackActive(status.playback_state) &&
+                                         radio_service_get_playing_station(&playing_station);
+        const bool usb_playing = has_playing_station &&
+                                 IsUsbStation(usb_stations_, playing_station.uuid);
+        const bool usb_start_pending = pending_play_external_ &&
+                                       IsUsbStation(usb_stations_, pending_play_station_.uuid);
+        if (!usb_index_pending_ && (!usb_playing || !usb_device_available_) &&
+            !usb_start_pending)
+            (void)FetchUsbIndex(true);
+        usb_index_refresh_tick_ = now + kUsbIndexRefreshIntervalMs;
+    }
+    if (disc_device_available_ && disc_focus_active_ && now >= disc_animation_tick_)
+    {
+        const bool disc_active = disc_index_pending_ || IsDiscPlaybackActive(disc_stations_, status);
+        if (disc_active)
+        {
+            disc_animation_frame_ = (disc_animation_frame_ + 1U) % kDiscFrameCount;
+            ShowDiscFrame(document_, disc_animation_frame_);
+        }
+        else if (disc_animation_frame_ != 0U)
+        {
+            disc_animation_frame_ = 0U;
+            ShowDiscFrame(document_, disc_animation_frame_);
+        }
+        disc_animation_tick_ = now + 80U;
+        RefreshDiscScreen();
+    }
     if (preset_confirm_zone_ >= 0 && radio_input_milliseconds() >= preset_confirm_until_)
     {
         preset_confirm_zone_ = -1;
         ApplyPresetIndicators();
     }
-    if (payload_keepalive_tick_ != 0 && now - payload_keepalive_tick_ >= 30000U)
+    if (payload_keepalive_tick_ != 0 && now >= payload_keepalive_tick_)
     {
-        (void)radio_payload_bridge_keepalive();
-        payload_keepalive_tick_ = now;
+        const bool bridge_ready = radio_payload_bridge_keepalive();
+        if (bridge_ready && !payload_bridge_was_ready_)
+        {
+            std::fprintf(stderr,
+                         "[ProsperoRadio][bridge] connection recovered; refreshing AUX/CD/USB\n");
+            (void)FetchAuxPlaylist();
+            (void)FetchDiscIndex(true);
+            (void)FetchUsbIndex(true);
+            media_index_refresh_tick_ = now + kDiscIndexRefreshIntervalMs;
+            usb_index_refresh_tick_ = now + kUsbIndexRefreshIntervalMs;
+        }
+        payload_bridge_was_ready_ = bridge_ready;
+        payload_keepalive_tick_ = now +
+                                  (bridge_ready ? kBridgeKeepaliveIntervalMs
+                                                : kBridgeRetryIntervalMs);
     }
 }
 
@@ -2327,8 +3223,13 @@ void RadioApp::StorePreset(int zone)
 {
     if (zone < 0 || zone > 2)
         return;
+    if (tuned_is_disc_)
+    {
+        SetText(document_, "home-status", "LAS PISTAS DEL CD NO SE GUARDAN EN PRESETS");
+        return;
+    }
     radio_station_t station{};
-    if (tuned_is_aux_)
+    if (tuned_is_aux_ || tuned_is_usb_)
         station = tuned_station_;
     else if (!radio_service_get_station(tuned_index_, &station))
     {
@@ -2340,9 +3241,10 @@ void RadioApp::StorePreset(int zone)
         SetText(document_, "home-status", "NO SE PUEDE GUARDAR ESTA EMISORA");
         return;
     }
-    preset_external_[zone] = tuned_is_aux_;
-    preset_external_station_[zone] = tuned_is_aux_ ? station : radio_station_t{};
-    presets_[zone] = tuned_is_aux_ ? -1 : static_cast<int>(tuned_index_);
+    const bool external = tuned_is_aux_ || tuned_is_usb_;
+    preset_external_[zone] = external;
+    preset_external_station_[zone] = external ? station : radio_station_t{};
+    presets_[zone] = external ? -1 : static_cast<int>(tuned_index_);
     CopyString(preset_uuids_[zone], sizeof(preset_uuids_[zone]), station.uuid);
     preset_saved_[zone] = true;
     tuned_station_ = station;
@@ -2400,7 +3302,20 @@ void RadioApp::RecallPreset(int zone)
         return;
     }
     preset_active_ = zone;
-    tuned_is_aux_ = external;
+    const bool usb_station = std::strncmp(station.uuid, "usb-audio-", 10U) == 0;
+    tuned_is_aux_ = external && !usb_station;
+    tuned_is_disc_ = false;
+    tuned_is_usb_ = external && usb_station;
+    if (disc_device_available_ && disc_focus_active_ &&
+        !IsDiscStation(disc_stations_, station.uuid))
+    {
+        disc_focus_active_ = false;
+        disc_animation_frame_ = 0U;
+        disc_animation_tick_ = SDL_GetTicks64();
+        UpdateDiscPresentation();
+        std::fprintf(stderr,
+                     "[ProsperoRadio][CD] display slept for non-disc preset playback\n");
+    }
     if (!external && presets_[zone] >= 0)
         tuned_index_ = static_cast<unsigned>(presets_[zone]);
     tuned_station_ = station;

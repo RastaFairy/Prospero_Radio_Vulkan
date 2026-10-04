@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/prospero-radio-v042-portada.jpg" alt="Prospero Radio Vulkan 01.000.057" width="90%">
+<img src="docs/prospero-radio-v042-portada.jpg" alt="Prospero Radio Vulkan" width="90%">
 
 # Prospero Radio Vulkan
 
@@ -19,17 +19,16 @@ Radio por internet para PS5 con una interfaz inspirada en un receptor clásico.
 
 ## Estado actual
 
-La versión fuente actual y la build publicada más reciente son **01.000.046**.
-El paquete FFPFSC se compiló el 01-10-2026, pasó el gate de recursos (14
-aprobados, 0 avisos, 0 fallos) y su SHA-256 coincide con el asset de la release
-[01.000.046](https://github.com/RastaFairy/Prospero_Radio_Vulkan/releases/tag/01.000.046):
-`26B77747F9142472B0213B33E14FFAD435CB3A6B3B06157CAAD0848ADE4B8940`.
+La fuente de esta rama declara la versión canónica **02.000.055** para `PPSA99001`.
+Esta actualización alinea la referencia Git y la etiqueta de la release con esa
+fuente; conserva los assets que ya estaban publicados y no afirma que se hayan
+reconstruido o vuelto a validar en esta tarea.
 
-El usuario confirmó la v046 en PS5: la interfaz se mantiene ágil, reconoce la
-configuración previa en `/data/radio` y la cruceta recorre la lista al mantener
-arriba o abajo. Conserva también defectos de reproducción: el test DASH 06 se oye
-como ruido blanco y algunos streams HLS fallan. La observación de consola no
-equivale a validar todos los formatos o emisoras. Estado y límites en
+La .055 reúne los cambios del bridge de persistencia, detección CD/USB y la cola
+AUX documentados en [`CHANGELOG.md`](CHANGELOG.md). La última versión que el autor
+confirmó funcionando en PS5 sigue siendo la **01.000.046**
+(`26B77747F9142472B0213B33E14FFAD435CB3A6B3B06157CAAD0848ADE4B8940`). La .055 no
+se ha validado en hardware; los límites de protocolo y reproducción siguen en
 [`docs/PENDIENTES.md`](docs/PENDIENTES.md).
 
 ## Qué aporta este fork
@@ -69,13 +68,13 @@ subir paquetes, dumps de consola, SDK ni dependencias descargadas. Consulta
 
 ## Distribución
 
-Esta rama está en desarrollo y la v042 tiene validación parcial en hardware. El
-paquete local pesa 52,887,552 bytes (SHA-256
-`7C515C6EC3214429264E678B0E30391C370DA4F3E41048B863176A351051D3D7`). El sello de
-pantalla confirma la versión mostrada, pero no identifica por sí solo el hash
-instalado. No se distribuye aquí el paquete: los artefactos y logs de `out/` son
-locales. Consulta [`CHANGELOG.md`](CHANGELOG.md) y
-[`docs/PENDIENTES.md`](docs/PENDIENTES.md) para la evidencia y lo que falta.
+La release [02.000.055](https://github.com/RastaFairy/Prospero_Radio_Vulkan/releases/tag/02.000.055)
+conserva los assets que ya estaban publicados. En esta actualización no se generó
+ni sustituyó un paquete: la referencia de código queda alineada a .055, pero no se
+certifica que los binarios existentes correspondan exactamente a esta fuente. La
+última validación confirmada en consola continúa siendo la **01.000.046**. Consulta
+[`CHANGELOG.md`](CHANGELOG.md) y [`docs/PENDIENTES.md`](docs/PENDIENTES.md) para
+límites y evidencia.
 
 ## Estructura principal
 

@@ -912,7 +912,7 @@ body {
     white-space: nowrap; overflow: hidden;
 }
 #list-title { visibility: hidden; }
-#list-tabs { position: absolute; left: 8px; top: 3px; width: 510px; height: 24px; overflow: hidden; }
+#list-tabs { position: absolute; left: 8px; top: 3px; width: 540px; height: 24px; overflow: hidden; }
 .list-tab {
     position: absolute; top: 0px; height: 22px; padding: 1px 9px;
     border: 1px #68492d; border-radius: 4px; color: #a97943;
@@ -922,6 +922,7 @@ body {
 #list-tab-radio { left: 0px; width: 104px; }
 #list-tab-favorites { left: 128px; width: 142px; }
 #list-tab-aux { left: 294px; width: 112px; }
+#list-tab-usb { left: 426px; width: 88px; }
 .list-tab.active {
     border: 1px #f4be76; background-color: #50351d; color: #ffe2ad;
     font-weight: bold;
@@ -1014,6 +1015,169 @@ body {
 
 #display { transition: opacity 0.9s; }
 .dying { opacity: 0.04; }
+
+/* The CD stack is an optional transparent art layer. Its lower receiver is
+   the canonical radio moved down as a whole; the radio controls/display follow. */
+#radio-cd-stack-overlay {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 1920px;
+    height: 1080px;
+    z-index: 1;
+}
+#app-shell.cd-stack-active #controls-layer { top: 130px; }
+#app-shell.cd-stack-active #display { top: 514px; }
+
+#cd-interface {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 1920px;
+    height: 1080px;
+    z-index: 11;
+    opacity: 1;
+    transition: opacity 0.45s;
+    overflow: hidden;
+}
+#cd-interface.sleeping { opacity: 0; }
+#cd-interface.hidden { display: none; }
+#cd-panel {
+    position: absolute;
+    left: 35px;
+    top: 58px;
+    width: 1850px;
+    height: 350px;
+    overflow: hidden;
+    color: #f4be76;
+}
+#cd-list-title, #cd-list-status {
+    position: absolute;
+    top: 63px;
+    height: 22px;
+    color: #e2a658;
+    font-size: 14px;
+    line-height: 20px;
+    white-space: nowrap;
+}
+#cd-list-title { left: 335px; width: 650px; }
+#cd-list-status { left: 1138px; width: 405px; text-align: left; }
+#cd-track-list {
+    position: absolute;
+    left: 333px;
+    top: 86px;
+    width: 683px;
+    height: 125px;
+    overflow: hidden;
+    color: #f5c27a;
+}
+.cd-track-row {
+    position: absolute;
+    left: 0px;
+    width: 674px;
+    height: 22px;
+    overflow: hidden;
+    color: #d8a45f;
+}
+.cd-track-row.selected { background-color: #5a381b; color: #fff0cf; }
+.cd-track-row.playing { background-color: #75491f; color: #fff4db; }
+#cd-track-0 { top: 0px; } #cd-track-1 { top: 24px; }
+#cd-track-2 { top: 48px; } #cd-track-3 { top: 72px; }
+#cd-track-4 { top: 96px; }
+.cd-track-mark {
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 18px;
+    height: 20px;
+    color: #ffd18a;
+    font-size: 12px;
+    line-height: 19px;
+    visibility: hidden;
+}
+.cd-track-row.selected .cd-track-mark { visibility: visible; }
+.cd-track-name {
+    position: absolute;
+    left: 28px;
+    top: 1px;
+    width: 440px;
+    height: 20px;
+    overflow: hidden;
+    font-size: 15px;
+    line-height: 19px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.cd-track-kind {
+    position: absolute;
+    right: 8px;
+    top: 1px;
+    width: 132px;
+    height: 20px;
+    color: #b68043;
+    font-size: 12px;
+    line-height: 19px;
+    text-align: right;
+    white-space: nowrap;
+}
+#cd-status-panel {
+    position: absolute;
+    left: 1138px;
+    top: 87px;
+    width: 415px;
+    height: 124px;
+    overflow: hidden;
+    color: #f4be76;
+}
+#cd-player-status {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 285px;
+    height: 20px;
+    color: #d6974b;
+    font-size: 13px;
+    line-height: 19px;
+}
+#cd-now-title {
+    position: absolute;
+    left: 0px;
+    top: 26px;
+    width: 290px;
+    height: 30px;
+    overflow: hidden;
+    color: #ffc775;
+    font-size: 18px;
+    line-height: 28px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+#cd-now-meta {
+    position: absolute;
+    left: 0px;
+    top: 61px;
+    width: 280px;
+    height: 20px;
+    overflow: hidden;
+    color: #be8745;
+    font-size: 13px;
+    line-height: 19px;
+    white-space: nowrap;
+}
+#cd-disc-viewport {
+    position: absolute;
+    left: 320px;
+    top: 25px;
+    width: 72px;
+    height: 72px;
+}
+.cd-disc-icon {
+    position: absolute;
+    left: 0px;
+    top: 0px;
+    width: 72px;
+    height: 72px;
+}
 
 #chip-p0, #chip-p1, #chip-p2 {
     position: absolute; top: 160px; width: 40px; height: 24px;

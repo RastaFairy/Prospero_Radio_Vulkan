@@ -1,6 +1,6 @@
 # Registro de cambios — Prospero Radio Vulkan
 
-> **Build 02.000.055** · compilación y gate local aprobados; prueba en PS5 pendiente.
+> **Fuente 02.000.055** · referencia publicada; paquete y validación en PS5 no confirmados en esta actualización.
 >
 > No confundir: *2.2.1* es la versión del paquete de interfaz original sobre el que se
 > construye este fork; *02.000.0XX* es la `contentVersion` que ve la consola en
@@ -27,8 +27,8 @@
 - **Bridge (montajes/listener):** conserva constancia de montajes propios cuya
   liberación falla; reintenta abrir el listener USB si no pudo iniciarlo. Los
   tamaños de registro CD/USB están declarados en sus cabeceras de protocolo.
-- Cambios validados mediante revisión estática únicamente (Luna 6); no compilados
-  ni ejecutados en PS5 en la sesión anterior.
+- El overlay ahora copia las cabeceras de protocolo CD/USB al árbol de compilación;
+  el intento de empaquetado de esta actualización no se completó y no hubo prueba en PS5.
 - **Limitaciones conocidas:** si la sincronización inicial falla tras los dos intentos,
   la sesión continúa con caché local o valores predeterminados (sin recarga SQLite en
   caliente). WMA/M4A no incluidos en estos cambios.

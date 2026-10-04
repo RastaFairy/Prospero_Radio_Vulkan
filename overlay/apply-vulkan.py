@@ -1837,7 +1837,12 @@ def main() -> int:
         print(f"         Proceeding anyway (compatibility mode)", file=sys.stderr)
 
     apply_ui_overlay(worktree, overlay)
-    for relative in ("include/payload_probe.hpp", "src/payload_probe.cpp"):
+    for relative in (
+        "include/payload_probe.hpp",
+        "include/radio_disc_protocol.h",
+        "include/radio_usb_protocol.h",
+        "src/payload_probe.cpp",
+    ):
         source = overlay / relative
         destination = worktree / relative
         destination.parent.mkdir(parents=True, exist_ok=True)

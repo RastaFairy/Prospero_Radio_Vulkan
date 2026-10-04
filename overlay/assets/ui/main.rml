@@ -1,12 +1,13 @@
 <rml>
     <head>
-        <title>ProsperoRadio</title>
+        <title>Prospero Radio Vulkan</title>
         <link type="text/rcss" href="styles/app.rcss" />
         <link type="text/rcss" href="styles/controls.rcss" />
     </head>
     <body>
         <div id="app-shell">
             <img id="radio-backdrop" src="art/radio_front_hybrid_4k.ktx2" alt="" />
+            <img id="radio-cd-stack-overlay" class="hidden" alt="" />
 
             <div id="controls-layer">
                 <div id="volume-frame" class="volume-frame volume-frame-20"></div>
@@ -46,6 +47,7 @@
                         <span id="list-tab-radio" class="list-tab">RADIO</span>
                         <span id="list-tab-favorites" class="list-tab">FAVORITOS</span>
                         <span id="list-tab-aux" class="list-tab">AUX</span>
+                        <span id="list-tab-usb" class="list-tab">USB</span>
                     </div>
                     <div id="list-row-0" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-0" class="list-name"></span><span id="list-meta-0" class="list-meta"></span><span id="list-fav-0" class="list-fav">&#9733;</span><span id="list-delete-countdown-0" class="list-delete-countdown hidden"></span></div>
                     <div id="list-row-1" class="list-row"><span class="list-cursor">&#9654;</span><span id="list-name-1" class="list-name"></span><span id="list-meta-1" class="list-meta"></span><span id="list-fav-1" class="list-fav">&#9733;</span><span id="list-delete-countdown-1" class="list-delete-countdown hidden"></span></div>
@@ -113,6 +115,39 @@
                         <span class="search-action-title">Show stations</span>
                     </button>
                     <span class="search-controls">Cross: edit / cycle  |  Up / Down: move  |  Circle: back</span>
+                </div>
+            </div>
+
+            <div id="cd-interface" class="hidden sleeping">
+                <div id="cd-panel">
+                    <span id="cd-list-title">PROSPERO CD</span>
+                    <span id="cd-list-status">WAITING FOR READER</span>
+                    <div id="cd-track-list">
+                        <div id="cd-track-0" class="cd-track-row"><span class="cd-track-mark">▶</span><span id="cd-track-name-0" class="cd-track-name"></span><span id="cd-track-kind-0" class="cd-track-kind"></span></div>
+                        <div id="cd-track-1" class="cd-track-row"><span class="cd-track-mark">▶</span><span id="cd-track-name-1" class="cd-track-name"></span><span id="cd-track-kind-1" class="cd-track-kind"></span></div>
+                        <div id="cd-track-2" class="cd-track-row"><span class="cd-track-mark">▶</span><span id="cd-track-name-2" class="cd-track-name"></span><span id="cd-track-kind-2" class="cd-track-kind"></span></div>
+                        <div id="cd-track-3" class="cd-track-row"><span class="cd-track-mark">▶</span><span id="cd-track-name-3" class="cd-track-name"></span><span id="cd-track-kind-3" class="cd-track-kind"></span></div>
+                        <div id="cd-track-4" class="cd-track-row"><span class="cd-track-mark">▶</span><span id="cd-track-name-4" class="cd-track-name"></span><span id="cd-track-kind-4" class="cd-track-kind"></span></div>
+                    </div>
+                    <div id="cd-status-panel">
+                        <span id="cd-player-status">READER READY</span>
+                        <span id="cd-now-title">INSERT AN AUDIO CD</span>
+                        <span id="cd-now-meta">CD-DA · CD-MP3</span>
+                        <div id="cd-disc-viewport">
+                            <img id="cd-disc-icon-00" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-01" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-02" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-03" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-04" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-05" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-06" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-07" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-08" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-09" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-10" class="cd-disc-icon hidden" alt="" />
+                            <img id="cd-disc-icon-11" class="cd-disc-icon hidden" alt="" />
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

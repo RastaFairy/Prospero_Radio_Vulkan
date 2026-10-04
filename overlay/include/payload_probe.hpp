@@ -6,6 +6,9 @@
 
 #include <cstddef>
 
+#include "radio_disc_protocol.h"
+#include "radio_usb_protocol.h"
+
 enum radio_payload_file_t
 {
     RADIO_PAYLOAD_CATALOG = 1,
@@ -48,4 +51,11 @@ bool radio_payload_bridge_fetch_aux_buffer(void *buffer, std::size_t capacity, s
                                            unsigned char *format, bool *not_found);
 bool radio_payload_bridge_store_aux_buffer(const void *buffer, std::size_t size,
                                            unsigned char format);
+// Read-only snapshot of the inserted USB optical disc. Audio is streamed
+// separately over loopback HTTP and is never copied to a persistent file.
+bool radio_payload_bridge_fetch_disc_index(void *buffer, std::size_t capacity,
+                                           std::size_t *size, bool force_refresh = false);
+// Read-only index of files exposed by system-mounted USB volumes.
+bool radio_payload_bridge_fetch_usb_index(void *buffer, std::size_t capacity,
+                                          std::size_t *size, bool force_refresh = false);
 void radio_payload_bridge_shutdown();
