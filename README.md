@@ -74,7 +74,7 @@ usuario confirma que ese paquete pasó el gate y fue publicado. El archivo local
 el asset actual de la release tienen hashes y tamaños distintos, por lo que no se
 tratan como el mismo binario. Esta sincronización actualiza fuente y documentación,
 conserva el asset publicado y no recompila ni lo sustituye. La última validación de
-hardware registrada en estas notas continúa siendo la **01.000.046**. Consulta
+hardware registrada en estas notas continúa siendo la **02.000.055**. Consulta
 [`CHANGELOG.md`](CHANGELOG.md) y [`docs/PENDIENTES.md`](docs/PENDIENTES.md) para
 límites y evidencia.
 
