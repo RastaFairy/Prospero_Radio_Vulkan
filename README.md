@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/prospero-radio-v042-portada.jpg" alt="Prospero Radio Vulkan 01.000.042" width="90%">
+<img src="docs/prospero-radio-v042-portada.jpg" alt="Prospero Radio Vulkan 01.000.057" width="90%">
 
 # Prospero Radio Vulkan
 
