@@ -26,7 +26,7 @@ reconstruido o vuelto a validar en esta tarea.
 
 La .055 reúne los cambios del bridge de persistencia, detección CD/USB y la cola
 AUX documentados en [`CHANGELOG.md`](CHANGELOG.md). La última versión que el autor
-confirmó funcionando en PS5 sigue siendo la **01.000.046**
+confirmó funcionando en PS5 sigue siendo la **02.000.055**
 (`26B77747F9142472B0213B33E14FFAD435CB3A6B3B06157CAAD0848ADE4B8940`). La .055 no
 se ha validado en hardware; los límites de protocolo y reproducción siguen en
 [`docs/PENDIENTES.md`](docs/PENDIENTES.md).
