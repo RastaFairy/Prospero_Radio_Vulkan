@@ -2,6 +2,18 @@
 
 ## Línea base y evidencia
 
+- **02.000.055:** el directorio local `prospero-radio-02.000.055-ppsa-cd-usb-final-gate`
+  incluye `PPSA99001.ffpfsc` y un `sce_sys/param.json` con `PPSA99001` /
+  `02.000.055`; el usuario confirma que pasó el gate y que publicó esta versión.
+  El paquete local mide 49.479.680 bytes (SHA-256
+  `58ab582a55aaa7c861c6c63f95104c2dc125d95a3c18c913338fde0f78de2c8c`); el asset
+  `PROSPERO_RADIO.ffpfsc` de la release actual mide 50.135.040 bytes (SHA-256
+  `7fc1350a77683c344b9098f1cdfc26fd9080fed3efce35891789bf08f0cfeeec`). Son
+  archivos distintos; esa diferencia no invalida por sí sola ninguno. La
+  sincronización de fuente conserva el asset publicado y no aporta una prueba nueva
+  de hardware. La última validación de consola registrada en este documento sigue
+  siendo la 01.000.046.
+
 - **02.000.054:** compilación local `PPSA99001` y gate del paquete aprobados
   (15 comprobaciones, 0 avisos, 0 fallos; MkPFS sin avisos ni errores). Al cambiar
   el foco CD a RADIO, se solicita parar cualquier reproducción iniciada desde el

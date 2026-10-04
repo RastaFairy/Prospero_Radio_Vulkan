@@ -1,6 +1,6 @@
 # Registro de cambios — Prospero Radio Vulkan
 
-> **Fuente 02.000.055** · referencia publicada; paquete y validación en PS5 no confirmados en esta actualización.
+> **Fuente y paquete 02.000.055** · release publicada por el mantenedor; esta sincronización no recompila ni sustituye el asset.
 >
 > No confundir: *2.2.1* es la versión del paquete de interfaz original sobre el que se
 > construye este fork; *02.000.0XX* es la `contentVersion` que ve la consola en
@@ -27,8 +27,11 @@
 - **Bridge (montajes/listener):** conserva constancia de montajes propios cuya
   liberación falla; reintenta abrir el listener USB si no pudo iniciarlo. Los
   tamaños de registro CD/USB están declarados en sus cabeceras de protocolo.
-- El overlay ahora copia las cabeceras de protocolo CD/USB al árbol de compilación;
-  el intento de empaquetado de esta actualización no se completó y no hubo prueba en PS5.
+- El overlay copia las cabeceras de protocolo CD/USB al árbol de compilación. El
+  usuario aportó el directorio local final-gate con `param.json` `PPSA99001` /
+  `02.000.055` y confirmó que el paquete es válido y está publicado. La release ya
+  contiene un asset `.ffpfsc`; su archivo no es idéntico al paquete local. Esta
+  sincronización conserva el asset y no añade evidencia nueva de hardware.
 - **Limitaciones conocidas:** si la sincronización inicial falla tras los dos intentos,
   la sesión continúa con caché local o valores predeterminados (sin recarga SQLite en
   caliente). WMA/M4A no incluidos en estos cambios.

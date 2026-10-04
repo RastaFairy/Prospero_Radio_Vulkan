@@ -69,10 +69,14 @@ subir paquetes, dumps de consola, SDK ni dependencias descargadas. Consulta
 ## Distribución
 
 La release [02.000.055](https://github.com/RastaFairy/Prospero_Radio_Vulkan/releases/tag/02.000.055)
-conserva los assets que ya estaban publicados. En esta actualización no se generó
-ni sustituyó un paquete: la referencia de código queda alineada a .055, pero no se
-certifica que los binarios existentes correspondan exactamente a esta fuente. La
-última validación confirmada en consola continúa siendo la **01.000.046**. Consulta
+ya contiene el `.ffpfsc` publicado por el mantenedor. El directorio local
+`prospero-radio-02.000.055-ppsa-cd-usb-final-gate` contiene también un
+`PPSA99001.ffpfsc` y un `param.json` que declara `PPSA99001` / `02.000.055`; el
+usuario confirma que ese paquete pasó el gate y fue publicado. El archivo local y
+el asset actual de la release tienen hashes y tamaños distintos, por lo que no se
+tratan como el mismo binario. Esta sincronización actualiza fuente y documentación,
+conserva el asset publicado y no recompila ni lo sustituye. La última validación de
+hardware registrada en estas notas continúa siendo la **01.000.046**. Consulta
 [`CHANGELOG.md`](CHANGELOG.md) y [`docs/PENDIENTES.md`](docs/PENDIENTES.md) para
 límites y evidencia.
 
