@@ -6,7 +6,7 @@
 
 Radio por internet para PS5 con una interfaz inspirada en un receptor clásico.
 
-![versión overlay](https://img.shields.io/badge/overlay-01.000.046-green)
+![versión overlay](https://img.shields.io/badge/overlay-02.000.055-green)
 ![plataforma](https://img.shields.io/badge/plataforma-PS5-00adef)
 [![Estado: Correcto](https://img.shields.io/badge/Estado-Correcto-success)](https://shields.io)
 ![licencia](https://img.shields.io/badge/licencia-GPL--3.0--or--later-green)
